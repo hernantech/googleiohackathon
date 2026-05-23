@@ -58,6 +58,9 @@ class SessionState(
     private val _snapshotInFlight = MutableStateFlow(false)
     val snapshotInFlight: StateFlow<Boolean> = _snapshotInFlight.asStateFlow()
 
+    /** Set by the activity; invoked (on first 📷 tap) to request camera perms in-VR. */
+    var onRequestCameraPermission: (() -> Unit)? = null
+
     private val _channels = MutableStateFlow<List<ChannelInfo>>(emptyList())
     val channels: StateFlow<List<ChannelInfo>> = _channels.asStateFlow()
 
@@ -126,6 +129,11 @@ class SessionState(
         val up = uploader
         if (cap == null || up == null) {
             systemLine("Camera not available in this build.")
+            return
+        }
+        if (!_cameraReady.value) {
+            systemLine("Approve the camera prompt in the headset, then tap 📷 again.")
+            onRequestCameraPermission?.invoke()
             return
         }
         if (_snapshotInFlight.value) return

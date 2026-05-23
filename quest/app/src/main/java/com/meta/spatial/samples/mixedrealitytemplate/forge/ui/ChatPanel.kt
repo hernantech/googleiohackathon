@@ -189,7 +189,7 @@ private fun QuickPrompts(session: SessionState) {
         // 📷 snapshot → /v2/snapshot; analysis returns as a card in #live-feed.
         Button(
             onClick = { session.captureAndAnalyze(note = null) },
-            enabled = cameraReady && !snapping,
+            enabled = !snapping, // tapping when !cameraReady triggers the in-VR permission prompt
             colors =
                 ButtonDefaults.buttonColors(
                     containerColor = ForgeTheme.accentLive.copy(alpha = 0.22f),

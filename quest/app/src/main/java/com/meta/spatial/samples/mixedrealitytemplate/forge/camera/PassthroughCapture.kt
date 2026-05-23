@@ -76,7 +76,8 @@ class PassthroughCapture(private val context: Context) {
                         )
                     }
                 session.setRepeatingRequest(req.build(), null, handler)
-                return@withLock firstStable.await() // suspends until a warmed frame is encoded
+                // suspends until a warmed (non-black) frame is encoded
+                return@withLock kotlinx.coroutines.withTimeout(6_000) { firstStable.await() }
             } finally {
                 try { session?.close() } catch (_: Throwable) {}
                 try { device?.close() } catch (_: Throwable) {}
@@ -128,13 +129,30 @@ class PassthroughCapture(private val context: Context) {
         return deferred
     }
 
-    private fun pickWorldCameraId(manager: CameraManager): String? =
-        manager.cameraIdList
-            .filter { id ->
-                val f = manager.getCameraCharacteristics(id).get(CameraCharacteristics.LENS_FACING)
-                f == CameraCharacteristics.LENS_FACING_BACK
-            }
-            .minByOrNull { it.toIntOrNull() ?: Int.MAX_VALUE }
+    /**
+     * Select the world-facing passthrough camera. Canonical approach (per Meta's
+     * PCA samples): filter by the vendor tag `camera_source == 0` and prefer
+     * `position == 0` (left). Falls back to a BACK-facing camera, then the first
+     * id, so we still get *a* camera if the vendor tags aren't readable.
+     */
+    private fun pickWorldCameraId(manager: CameraManager): String? {
+        val ids = manager.cameraIdList
+        fun meta(id: String, key: CameraCharacteristics.Key<Int>): Int? =
+            runCatching { manager.getCameraCharacteristics(id).get(key) }.getOrNull()
+
+        val passthrough = ids.filter { meta(it, SOURCE_KEY) == CAMERA_SOURCE_PASSTHROUGH }
+        passthrough.minByOrNull { meta(it, POSITION_KEY) ?: 99 }?.let { return it }
+
+        Log.w(TAG, "no PCA vendor-tag camera; falling back to LENS_FACING_BACK")
+        ids.filter {
+            runCatching {
+                manager.getCameraCharacteristics(it).get(CameraCharacteristics.LENS_FACING) ==
+                    CameraCharacteristics.LENS_FACING_BACK
+            }.getOrDefault(false)
+        }.minByOrNull { it.toIntOrNull() ?: Int.MAX_VALUE }?.let { return it }
+
+        return ids.firstOrNull()
+    }
 
     private fun chooseYuvSize(ch: CameraCharacteristics, maxLongEdge: Int): Pair<Int, Int> {
         val map = ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
@@ -206,6 +224,16 @@ class PassthroughCapture(private val context: Context) {
     companion object {
         private const val TAG = "ForgeCamera"
         const val HEADSET_CAMERA = "horizonos.permission.HEADSET_CAMERA"
-        private const val WARMUP_FRAMES = 3
+
+        // The first frames after a PCA session opens are black (sensor warm-up);
+        // discard several before encoding.
+        private const val WARMUP_FRAMES = 8
+
+        // Meta Passthrough Camera API vendor tags (see PCA samples).
+        private const val CAMERA_SOURCE_PASSTHROUGH = 0
+        private val SOURCE_KEY =
+            CameraCharacteristics.Key("com.meta.extra_metadata.camera_source", Int::class.java)
+        private val POSITION_KEY =
+            CameraCharacteristics.Key("com.meta.extra_metadata.position", Int::class.java)
     }
 }

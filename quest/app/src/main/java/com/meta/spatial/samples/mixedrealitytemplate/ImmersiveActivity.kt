@@ -93,18 +93,26 @@ class ImmersiveActivity : AppSystemActivity() {
     val capture = PassthroughCapture(applicationContext)
     val uploader = SnapshotUploader(BuildConfig.ORCHESTRATOR_SNAPSHOT_URL)
     session = SessionState(socket, activityScope, capture, uploader)
+    // Request camera perms LAZILY (on first 📷 tap), never at boot — requesting
+    // at boot backgrounds the immersive activity to show the system dialog and
+    // kills passthrough. The callback runs the legacy request from the activity.
+    session.onRequestCameraPermission = {
+      runOnUiThread {
+        requestPermissions(
+            arrayOf(android.Manifest.permission.CAMERA, PassthroughCapture.HEADSET_CAMERA),
+            REQ_CAMERA,
+        )
+      }
+    }
+    session.setCameraReady(hasCameraPerms())
     session.start()
-
-    // World-camera permissions for /v2/snapshot. HEADSET_CAMERA only grants via
-    // the in-VR dialog; the 📷 button stays disabled until cameraReady flips.
-    val needed =
-        arrayOf(android.Manifest.permission.CAMERA, PassthroughCapture.HEADSET_CAMERA)
-    val missing = needed.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
-    if (missing.isEmpty()) session.setCameraReady(true)
-    else requestPermissions(missing.toTypedArray(), REQ_CAMERA)
 
     loadGLXF()
   }
+
+  private fun hasCameraPerms(): Boolean =
+      checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED &&
+          checkSelfPermission(PassthroughCapture.HEADSET_CAMERA) == PackageManager.PERMISSION_GRANTED
 
   override fun onRequestPermissionsResult(
       requestCode: Int,
@@ -113,10 +121,7 @@ class ImmersiveActivity : AppSystemActivity() {
   ) {
     super.onRequestPermissionsResult(requestCode, permissions, grantResults)
     if (requestCode == REQ_CAMERA && ::session.isInitialized) {
-      val granted =
-          checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED &&
-              checkSelfPermission(PassthroughCapture.HEADSET_CAMERA) == PackageManager.PERMISSION_GRANTED
-      session.setCameraReady(granted)
+      session.setCameraReady(hasCameraPerms())
     }
   }
 
