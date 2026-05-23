@@ -12,6 +12,7 @@ on:
       - "bench_knowledge/**"
       - "pyproject.toml"
       - "Dockerfile"
+      - "observer/**"
       - "deploy/**"
       - ".github/workflows/deploy-backend.yml"
   workflow_dispatch:
@@ -60,8 +61,47 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  # Decoupled observer image — its OWN build context (observer/) and OWN image
+  # name. Runs in parallel with the orchestrator build; failure here does not
+  # affect the orchestrator tags already pushed above.
+  build-and-push-observer:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute lowercase image name
+        id: meta
+        run: echo "image=${REGISTRY}/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')-observer" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push observer (linux/arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./observer
+          platforms: linux/arm64
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}:latest
+            ${{ steps.meta.outputs.image }}:${{ github.sha }}
+          cache-from: type=gha,scope=observer
+          cache-to: type=gha,mode=max,scope=observer
+
   deploy:
-    needs: build-and-push
+    needs: [build-and-push, build-and-push-observer]
     runs-on: ubuntu-latest
     # Only deploy from main or when manually dispatched — not on every PR branch push.
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
@@ -99,21 +139,30 @@ jobs:
       - name: Deploy (pull + up + health check)
         env:
           IMAGE: ${{ needs.build-and-push.outputs.image }}:${{ github.sha }}
+          OBSERVER_IMG: ${{ needs.build-and-push-observer.outputs.image }}:${{ github.sha }}
         run: |
           ssh -i ~/.ssh/deploy_key "${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}" \
-            "GHCR_USER='${{ github.actor }}' GHCR_TOKEN='${{ secrets.GITHUB_TOKEN }}' ORCHESTRATOR_IMAGE='${IMAGE}' bash -s" <<'REMOTE'
+            "GHCR_USER='${{ github.actor }}' GHCR_TOKEN='${{ secrets.GITHUB_TOKEN }}' ORCHESTRATOR_IMAGE='${IMAGE}' OBSERVER_IMAGE='${OBSERVER_IMG}' bash -s" <<'REMOTE'
           set -euo pipefail
           cd ~/forge-deploy
           echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
-          export ORCHESTRATOR_IMAGE
-          echo "Deploying $ORCHESTRATOR_IMAGE"
+          export ORCHESTRATOR_IMAGE OBSERVER_IMAGE
+          echo "Deploying orchestrator=$ORCHESTRATOR_IMAGE observer=$OBSERVER_IMAGE"
           docker compose pull
           docker compose up -d
           docker image prune -f
-          # wait for health
+          # wait for orchestrator health (the observer tolerates the bus being
+          # briefly absent and reconnects, so we gate the deploy on orchestrator).
           for i in $(seq 1 20); do
-            if curl -fsS http://localhost:8080/healthz; then echo; echo "healthy"; exit 0; fi
+            if curl -fsS http://localhost:8080/healthz; then echo; echo "orchestrator healthy"; break; fi
+            sleep 3
+            if [ "$i" = "20" ]; then echo "orchestrator health check failed"; docker compose logs --tail=50; exit 1; fi
+          done
+          # best-effort observer health (non-fatal: don't fail the deploy if the
+          # dashboard is slow to come up — the orchestrator is the critical path).
+          for i in $(seq 1 10); do
+            if curl -fsS http://localhost:8090/healthz; then echo; echo "observer healthy"; break; fi
             sleep 3
           done
-          echo "health check failed"; docker compose logs --tail=50; exit 1
+          exit 0
           REMOTE

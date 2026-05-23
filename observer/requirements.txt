@@ -1,0 +1,7 @@
+# Observer runtime deps. Pinned-ish lower bounds matching the orchestrator's
+# stack so versions don't drift across containers.
+fastapi>=0.115
+uvicorn[standard]>=0.32
+websockets>=13
+google-genai>=2.6        # distiller (gemini-3.5-flash); same SDK + key as orchestrator
+# pydantic comes transitively via fastapi; no direct use here.

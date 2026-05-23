@@ -21,3 +21,38 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  # Decoupled manager dashboard. Taps the orchestrator chat bus as a WS CLIENT
+  # over the docker network (service name `orchestrator`), persists to SQLite on
+  # the `observer-data` named volume, distills via Gemini, and serves on 8090.
+  observer:
+    image: ${OBSERVER_IMAGE:-ghcr.io/hernantech/googleiohackathon-observer:latest}
+    container_name: forge-observer
+    restart: unless-stopped
+    depends_on:
+      - orchestrator
+    environment:
+      # Tap the orchestrator over the compose network (not the public IP).
+      OBSERVER_BUS_URL: "ws://orchestrator:8080/v2/chat"
+      OBSERVER_DB_PATH: "/data/observer.db"
+      # Same GEMINI_API_KEY the orchestrator uses (rendered into .env by CI).
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      OBSERVER_GEMINI_MODEL: "gemini-3.5-flash"
+    ports:
+      - "8090:8090"
+    volumes:
+      - observer-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8090/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  observer-data:

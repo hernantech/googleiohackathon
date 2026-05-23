@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Forge Observer — Bench Floor</title>
+<style>
+  :root {
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2230; --line:#30363d;
+    --text:#e6edf3; --muted:#8b949e; --accent:#58a6ff;
+    --ok:#3fb950; --warn:#d29922; --halt:#f85149; --pending:#bc8cff;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.45 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+         background:var(--bg); color:var(--text); }
+  header { display:flex; align-items:center; gap:16px; padding:14px 20px;
+           border-bottom:1px solid var(--line); background:var(--panel); position:sticky; top:0; z-index:5; }
+  header h1 { font-size:16px; margin:0; letter-spacing:.3px; }
+  .dot { width:9px; height:9px; border-radius:50%; background:var(--ok); display:inline-block; margin-right:6px; }
+  .dot.stale { background:var(--warn); }
+  .totals { color:var(--muted); font-size:13px; display:flex; gap:18px; margin-left:auto; }
+  .totals b { color:var(--text); }
+  main { padding:18px 20px; max-width:1400px; margin:0 auto; }
+
+  .alert-bar { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:18px; }
+  .alert { background:var(--panel2); border:1px solid var(--line); border-left:4px solid var(--warn);
+           border-radius:7px; padding:9px 13px; font-size:13px; }
+  .alert.halt { border-left-color:var(--halt); }
+  .alert.pending { border-left-color:var(--pending); }
+  .alert .age { color:var(--muted); }
+
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(380px,1fr)); gap:16px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px;
+          display:flex; flex-direction:column; gap:11px; cursor:pointer; transition:border-color .15s; }
+  .card:hover { border-color:var(--accent); }
+  .card.flagged { border-color:var(--halt); box-shadow:0 0 0 1px rgba(248,81,73,.25); }
+  .card.idle { opacity:.62; }
+  .card-top { display:flex; align-items:baseline; gap:10px; }
+  .who { font-weight:600; font-size:15px; }
+  .since { color:var(--muted); font-size:12px; margin-left:auto; }
+  .live { color:var(--ok); }
+  .offline { color:var(--muted); }
+
+  .headline { font-size:14px; line-height:1.5; }
+  .headline .src { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px;
+                   border:1px solid var(--line); border-radius:4px; padding:1px 5px; margin-left:6px; }
+  .src.gemini { color:var(--accent); border-color:var(--accent); }
+  .src.heuristic { color:var(--warn); border-color:var(--warn); }
+
+  .task { font-size:12px; color:var(--muted); }
+  .task b { color:var(--text); font-weight:600; }
+
+  .flags { display:flex; flex-wrap:wrap; gap:6px; }
+  .flag { font-size:11px; font-weight:600; padding:2px 8px; border-radius:20px; }
+  .flag.safety_halt { background:rgba(248,81,73,.18); color:var(--halt); }
+  .flag.safety_warn { background:rgba(210,153,34,.18); color:var(--warn); }
+  .flag.repeated_dissent { background:rgba(188,140,255,.16); color:var(--pending); }
+  .flag.stuck_confirmation { background:rgba(210,153,34,.18); color:var(--warn); }
+  .flag.long_pause { background:rgba(139,148,158,.18); color:var(--muted); }
+
+  .smes { display:flex; flex-direction:column; gap:4px; }
+  .sme { font-size:12px; }
+  .sme .id { color:var(--accent); font-weight:600; }
+  .sme .conf { color:var(--muted); }
+
+  .pend { font-size:12px; background:var(--panel2); border:1px solid var(--line); border-radius:6px; padding:7px 10px; }
+  .pend.stuck { border-color:var(--warn); }
+  .pend .age { color:var(--warn); font-weight:600; }
+
+  /* drill-down drawer */
+  #drawer { position:fixed; top:0; right:0; width:min(520px,92vw); height:100%; background:var(--panel);
+            border-left:1px solid var(--line); transform:translateX(100%); transition:transform .2s;
+            z-index:20; overflow-y:auto; padding:20px; }
+  #drawer.open { transform:translateX(0); }
+  #drawer h2 { margin:0 0 4px; font-size:16px; }
+  #drawer .close { position:absolute; top:14px; right:16px; cursor:pointer; color:var(--muted); font-size:20px; }
+  .tl { list-style:none; padding:0; margin:14px 0 0; }
+  .tl li { border-left:2px solid var(--line); padding:6px 0 6px 14px; margin-left:6px; position:relative; }
+  .tl li::before { content:""; position:absolute; left:-6px; top:11px; width:8px; height:8px;
+                   border-radius:50%; background:var(--accent); }
+  .tl .k { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; }
+  .tl .s { font-size:13px; }
+  .tl .who2 { color:var(--accent); }
+  .empty { color:var(--muted); padding:40px; text-align:center; }
+  .footnote { color:var(--muted); font-size:11px; margin-top:24px; text-align:center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🔧 Forge Observer</h1>
+  <span id="conn"><span class="dot"></span>connecting…</span>
+  <div class="totals">
+    <span><b id="t-ops">0</b> operators</span>
+    <span><b id="t-flag">0</b> flagged</span>
+    <span><b id="t-ev">0</b> events</span>
+    <span id="t-clock"></span>
+  </div>
+</header>
+<main>
+  <div class="alert-bar" id="alerts"></div>
+  <div class="grid" id="grid"><div class="empty">No active operators yet.</div></div>
+  <div class="footnote">
+    Polls every 4s · headlines distilled by Gemini (3.5-flash) or heuristic fallback ·
+    read-only view of the orchestrator chat bus
+  </div>
+</main>
+
+<div id="drawer">
+  <span class="close" onclick="closeDrawer()">×</span>
+  <h2 id="d-title"></h2>
+  <div id="d-sub" class="task"></div>
+  <ul class="tl" id="d-tl"></ul>
+</div>
+
+<script>
+const POLL_MS = 4000;
+let lastOk = 0;
+
+function fmtAge(ms){
+  if(ms==null) return "—";
+  const s=Math.floor(ms/1000);
+  if(s<60) return s+"s";
+  const m=Math.floor(s/60);
+  if(m<60) return m+"m"+(s%60? " "+(s%60)+"s":"");
+  const h=Math.floor(m/60); return h+"h "+(m%60)+"m";
+}
+const FLAG_LABEL = {
+  safety_halt:"⛔ SAFETY HALT", safety_warn:"⚠ Safety warn",
+  repeated_dissent:"⚔ Repeated dissent", stuck_confirmation:"⏳ Stuck confirmation",
+  long_pause:"💤 Long pause"
+};
+const esc = s => (s==null?"":String(s)).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+
+async function poll(){
+  try{
+    const r = await fetch("/api/overview"); const d = await r.json();
+    lastOk = Date.now(); render(d); setConn(true);
+  }catch(e){ setConn(false); }
+}
+function setConn(ok){
+  const el=document.getElementById("conn");
+  const stale = Date.now()-lastOk > POLL_MS*3;
+  el.innerHTML = `<span class="dot ${(!ok||stale)?'stale':''}"></span>${ok?'live':'reconnecting…'}`;
+}
+
+function render(d){
+  document.getElementById("t-ops").textContent = d.totals.operators;
+  document.getElementById("t-flag").textContent = d.totals.flagged;
+  document.getElementById("t-ev").textContent = d.totals.events;
+  document.getElementById("t-clock").textContent = new Date(d.now_ms).toLocaleTimeString();
+
+  // alert bar: global pending confirmations + any halts
+  const alerts = [];
+  for(const p of (d.pending_confirmations||[])){
+    const stuck = p.pending_ms >= 120000;
+    alerts.push(`<div class="alert pending">⏳ Confirmation pending: <b>${esc(p.summary||p.call_id)}</b>
+      ${p.invoker?`<span class="age">(${esc(p.invoker)})</span>`:""}
+      <span class="age ${stuck?'':''}">— waiting ${fmtAge(p.pending_ms)}${stuck?" ⚠ operator stuck?":""}</span></div>`);
+  }
+  for(const o of d.operators){
+    if((o.flags||[]).includes("safety_halt"))
+      alerts.push(`<div class="alert halt">⛔ SAFETY HALT — <b>${esc(o.session_id)}</b></div>`);
+  }
+  document.getElementById("alerts").innerHTML = alerts.join("");
+
+  const grid = document.getElementById("grid");
+  if(!d.operators.length){ grid.innerHTML='<div class="empty">No active operators yet.</div>'; return; }
+  grid.innerHTML = d.operators.map(card).join("");
+}
+
+function card(o){
+  const flagged = (o.flags||[]).some(f=>f==="safety_halt"||f==="stuck_confirmation");
+  const flags = (o.flags||[]).map(f=>`<span class="flag ${f}">${FLAG_LABEL[f]||f}</span>`).join("");
+  const smes = (o.smes_consulted||[]).map(s=>{
+    const c = (s.confidence!=null)? `<span class="conf">${Math.round(s.confidence*100)}%</span>`:"";
+    return `<div class="sme"><span class="id">${esc(s.sme)}</span> ${c} — ${esc(s.claim||"")}</div>`;
+  }).join("");
+  const pend = (o.pending_confirmations||[]).map(p=>{
+    const stuck = p.pending_ms>=120000;
+    return `<div class="pend ${stuck?'stuck':''}">⏳ ${esc(p.summary||p.call_id)}
+      — <span class="age">${fmtAge(p.pending_ms)}</span>${p.risk?` · ${esc(p.risk)}`:""}</div>`;
+  }).join("");
+  const src = o.headline_source||"";
+  return `<div class="card ${flagged?'flagged':''} ${o.active?'':'idle'}" onclick="openDrawer('${esc(o.session_id)}')">
+    <div class="card-top">
+      <span class="who">${o.active?'🟢':'⚪'} ${esc(o.session_id)}</span>
+      <span class="since ${o.active?'live':'offline'}">${o.active?'active':'idle'} ${fmtAge(o.active?o.active_for_ms:o.idle_ms)}</span>
+    </div>
+    <div class="headline">${esc(o.headline)}<span class="src ${src}">${src}</span></div>
+    ${o.board_task?`<div class="task">Task: <b>${esc(o.board_task)}</b> · ${o.event_count} events</div>`:""}
+    ${flags?`<div class="flags">${flags}</div>`:""}
+    ${smes?`<div class="smes">${smes}</div>`:""}
+    ${pend||""}
+  </div>`;
+}
+
+async function openDrawer(sid){
+  document.getElementById("drawer").classList.add("open");
+  document.getElementById("d-title").textContent = sid;
+  document.getElementById("d-sub").textContent = "loading…";
+  document.getElementById("d-tl").innerHTML = "";
+  try{
+    const r = await fetch("/api/session/"+encodeURIComponent(sid)); const d = await r.json();
+    const f = d.facts;
+    document.getElementById("d-sub").innerHTML =
+      `Task: <b>${esc(f.board_task||'(unknown)')}</b> · active ${fmtAge(f.active_for_ms)} · ${f.event_count} events`;
+    document.getElementById("d-tl").innerHTML = (f.timeline||[]).slice().reverse().map(t=>
+      `<li><div class="k">${esc(t.kind)} ${t.author?`· <span class="who2">${esc(t.author)}</span>`:""}</div>
+       <div class="s">${esc(t.summary||"")}</div></li>`).join("") || '<li class="empty">No steps yet.</li>';
+  }catch(e){ document.getElementById("d-sub").textContent = "failed to load"; }
+}
+function closeDrawer(){ document.getElementById("drawer").classList.remove("open"); }
+
+poll(); setInterval(poll, POLL_MS); setInterval(()=>setConn(true), 1000);
+</script>
+</body>
+</html>
