@@ -24,6 +24,10 @@ class Settings:
     gemini_api_key: str = ""
     managed_agents_api_key: str = ""
     board_profile: str = ""  # path; unset → bundled bq79616 demo profile
+    # Always-on Live model (00 §4.1, 07 §2.1). Verified working default:
+    # gemini-3.1-flash-live-preview (AUDIO out + transcription) — see
+    # orchestrator/live/session.py.
+    gemini_live_model: str = "gemini-3.1-flash-live-preview"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -35,6 +39,7 @@ class Settings:
             gemini_api_key=os.getenv("GEMINI_API_KEY", ""),
             managed_agents_api_key=os.getenv("MANAGED_AGENTS_API_KEY", ""),
             board_profile=os.getenv("BOARD_PROFILE", ""),
+            gemini_live_model=os.getenv("GEMINI_LIVE_MODEL", "gemini-3.1-flash-live-preview"),
         )
 
     def integration_status(self) -> dict[str, str]:
@@ -46,6 +51,9 @@ class Settings:
             "smes": "live (gemini-3.5-flash)" if live else "stub",
             "board_profile": self.board_profile or "bundled-demo",
             "model_seams": "live" if live else "stub",
+            # Always-on /v2/live duplex bridge (00 §4.1). Real google-genai Live
+            # session when keyed + the [live] extra is installed; else no-op stub.
+            "live_bridge": (f"live ({self.gemini_live_model})" if live else "stub"),
         }
 
 
