@@ -42,6 +42,10 @@
     android:required="false"
   />
   <uses-permission android:name="android.permission.INTERNET" />
+  <!-- Forge: world-facing passthrough camera for /v2/snapshot.
+       HEADSET_CAMERA is grantable only via the in-VR runtime dialog. -->
+  <uses-permission android:name="android.permission.CAMERA" />
+  <uses-permission android:name="horizonos.permission.HEADSET_CAMERA" />
   <uses-feature
     android:name="com.oculus.feature.RENDER_MODEL"
     android:required="false"

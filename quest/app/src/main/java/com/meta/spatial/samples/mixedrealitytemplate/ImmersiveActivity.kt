@@ -1,6 +1,7 @@
 package com.meta.spatial.samples.mixedrealitytemplate
 
 import android.annotation.SuppressLint
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.view.View
 import android.webkit.WebView
@@ -9,7 +10,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.ui.platform.ComposeView
 import androidx.core.net.toUri
+import com.meta.spatial.samples.mixedrealitytemplate.forge.camera.PassthroughCapture
 import com.meta.spatial.samples.mixedrealitytemplate.forge.net.OrchestratorSocket
+import com.meta.spatial.samples.mixedrealitytemplate.forge.net.SnapshotUploader
 import com.meta.spatial.samples.mixedrealitytemplate.forge.state.SessionState
 import com.meta.spatial.samples.mixedrealitytemplate.forge.ui.ChatPanel
 import com.meta.spatial.samples.mixedrealitytemplate.forge.ui.ConfirmationPanel
@@ -87,10 +90,34 @@ class ImmersiveActivity : AppSystemActivity() {
     // Forge: connect to the orchestrator chat bus and project events into UI.
     val socket =
         OrchestratorSocket(baseUrl = BuildConfig.ORCHESTRATOR_URL, scope = activityScope)
-    session = SessionState(socket, activityScope)
+    val capture = PassthroughCapture(applicationContext)
+    val uploader = SnapshotUploader(BuildConfig.ORCHESTRATOR_SNAPSHOT_URL)
+    session = SessionState(socket, activityScope, capture, uploader)
     session.start()
 
+    // World-camera permissions for /v2/snapshot. HEADSET_CAMERA only grants via
+    // the in-VR dialog; the 📷 button stays disabled until cameraReady flips.
+    val needed =
+        arrayOf(android.Manifest.permission.CAMERA, PassthroughCapture.HEADSET_CAMERA)
+    val missing = needed.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+    if (missing.isEmpty()) session.setCameraReady(true)
+    else requestPermissions(missing.toTypedArray(), REQ_CAMERA)
+
     loadGLXF()
+  }
+
+  override fun onRequestPermissionsResult(
+      requestCode: Int,
+      permissions: Array<out String>,
+      grantResults: IntArray,
+  ) {
+    super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+    if (requestCode == REQ_CAMERA && ::session.isInitialized) {
+      val granted =
+          checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED &&
+              checkSelfPermission(PassthroughCapture.HEADSET_CAMERA) == PackageManager.PERMISSION_GRANTED
+      session.setCameraReady(granted)
+    }
   }
 
   override fun onSceneReady() {
@@ -220,5 +247,9 @@ class ImmersiveActivity : AppSystemActivity() {
         android.util.Log.w("MRT", "GLXF inflate skipped: ${e.message}")
       }
     }
+  }
+
+  companion object {
+    private const val REQ_CAMERA = 4201
   }
 }

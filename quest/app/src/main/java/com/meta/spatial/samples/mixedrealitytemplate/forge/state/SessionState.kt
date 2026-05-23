@@ -1,7 +1,9 @@
 package com.meta.spatial.samples.mixedrealitytemplate.forge.state
 
 import android.util.Log
+import com.meta.spatial.samples.mixedrealitytemplate.forge.camera.PassthroughCapture
 import com.meta.spatial.samples.mixedrealitytemplate.forge.net.OrchestratorSocket
+import com.meta.spatial.samples.mixedrealitytemplate.forge.net.SnapshotUploader
 import com.meta.spatial.samples.mixedrealitytemplate.forge.net.SocketState
 import com.meta.spatial.samples.mixedrealitytemplate.forge.proto.ActionCard
 import com.meta.spatial.samples.mixedrealitytemplate.forge.proto.AuthorKind
@@ -45,8 +47,16 @@ data class ConfirmationUi(
 class SessionState(
     val socket: OrchestratorSocket,
     private val scope: CoroutineScope,
+    private val capture: PassthroughCapture? = null,
+    private val uploader: SnapshotUploader? = null,
 ) {
     val connection: StateFlow<SocketState> = socket.state
+
+    private val _cameraReady = MutableStateFlow(false)
+    val cameraReady: StateFlow<Boolean> = _cameraReady.asStateFlow()
+
+    private val _snapshotInFlight = MutableStateFlow(false)
+    val snapshotInFlight: StateFlow<Boolean> = _snapshotInFlight.asStateFlow()
 
     private val _channels = MutableStateFlow<List<ChannelInfo>>(emptyList())
     val channels: StateFlow<List<ChannelInfo>> = _channels.asStateFlow()
@@ -100,6 +110,55 @@ class SessionState(
         val c = _confirmation.value ?: return
         socket.respondConfirmation(c.callId, approved)
         _confirmation.value = null
+    }
+
+    fun setCameraReady(ready: Boolean) {
+        _cameraReady.value = ready
+    }
+
+    /**
+     * Capture a world-facing still and POST it to /v2/snapshot. The resulting
+     * SnapshotAnalysis card returns asynchronously over the chat socket (routed
+     * by the shared sessionId) and renders via the existing ChatPanel card path.
+     */
+    fun captureAndAnalyze(note: String? = null) {
+        val cap = capture
+        val up = uploader
+        if (cap == null || up == null) {
+            systemLine("Camera not available in this build.")
+            return
+        }
+        if (_snapshotInFlight.value) return
+        _snapshotInFlight.value = true
+        scope.launch {
+            try {
+                val still = cap.captureStill()
+                systemLine("📷 analyzing snapshot (${still.width}×${still.height})…")
+                up.upload(socket.sessionId, still.jpeg, still.width, still.height, note)
+                    .onFailure { systemLine("Snapshot upload failed: ${it.message}") }
+            } catch (e: SecurityException) {
+                _cameraReady.value = false
+                systemLine("Camera permission needed — approve it in the headset.")
+            } catch (e: Exception) {
+                systemLine("Snapshot capture failed: ${e.message}")
+            } finally {
+                _snapshotInFlight.value = false
+            }
+        }
+    }
+
+    /** Insert a local system message into #live-feed (analysis lands there too). */
+    private fun systemLine(text: String) {
+        upsertMessage(
+            ForgeMsg.ChatMessage(
+                channelId = "#live-feed",
+                authorId = "@forge",
+                authorKind = AuthorKind.SYSTEM,
+                body = text,
+                messageId = OrchestratorSocket.newUlid(),
+                ts = System.currentTimeMillis() * 1_000_000L,
+            ),
+        )
     }
 
     // ── event projection ────────────────────────────────────────────────────

@@ -27,6 +27,11 @@ android {
         "ORCHESTRATOR_URL",
         "\"${project.findProperty("orchestratorUrl") ?: "ws://20.230.188.247:8080/v2/chat"}\"",
     )
+    buildConfigField(
+        "String",
+        "ORCHESTRATOR_SNAPSHOT_URL",
+        "\"${project.findProperty("orchestratorSnapshotUrl") ?: "http://20.230.188.247:8080/v2/snapshot"}\"",
+    )
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

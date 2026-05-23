@@ -177,6 +177,8 @@ private fun JsonCard(body: String) {
 
 @Composable
 private fun QuickPrompts(session: SessionState) {
+    val cameraReady by session.cameraReady.collectAsState()
+    val snapping by session.snapshotInFlight.collectAsState()
     val presets =
         listOf(
             "@power why won't the BQ79616 wake?" to "@power",
@@ -184,6 +186,21 @@ private fun QuickPrompts(session: SessionState) {
             "@signal noise on the bus?" to "@signal",
         )
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        // 📷 snapshot → /v2/snapshot; analysis returns as a card in #live-feed.
+        Button(
+            onClick = { session.captureAndAnalyze(note = null) },
+            enabled = cameraReady && !snapping,
+            colors =
+                ButtonDefaults.buttonColors(
+                    containerColor = ForgeTheme.accentLive.copy(alpha = 0.22f),
+                    contentColor = ForgeTheme.accentLive,
+                    disabledContainerColor = ForgeTheme.captionText.copy(alpha = 0.2f),
+                    disabledContentColor = ForgeTheme.captionText,
+                ),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+        ) {
+            Text(if (snapping) "📷…" else "📷", fontSize = ForgeTheme.caption.size)
+        }
         presets.forEach { (text, label) ->
             Button(
                 onClick = { session.sendChat(text) },
