@@ -32,6 +32,7 @@ fun HudPanel(session: SessionState) {
     val conn by session.connection.collectAsState()
     val transcript by session.transcript.collectAsState()
     val tools by session.toolCalls.collectAsState()
+    val live by session.liveActive.collectAsState()
 
     Column(
         modifier =
@@ -46,6 +47,10 @@ fun HudPanel(session: SessionState) {
             Box(dot)
             Spacer8()
             ForgeLabel("FORGE · $label", ForgeTheme.primaryText)
+            if (live) {
+                Spacer8()
+                ForgeLabel("● LIVE", ForgeTheme.riskHigh)
+            }
         }
 
         val t = transcript

@@ -42,79 +42,50 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Discord-style expert chat — the soul of Forge. Left channel rail, message
- * thread for the selected channel, quick-prompt chips, and a text input.
- * Mirrors the iOS `ExpertChatPanel`, reflowed to a single panel for Quest.
+ * The Forge Guild — ONE unified feed where every agent comments asynchronously
+ * on the user's work. All channels are merged into a single chronological stream
+ * (color-coded by agent), so the guild reads like a live group chat rather than
+ * per-SME threads. Gemini (server-side `classify`) orchestrates which agents
+ * speak; we just render everything they say. Quick-prompts + text input below.
  */
 @Composable
 fun ChatPanel(session: SessionState) {
-    val channels by session.channels.collectAsState()
     val messages by session.messages.collectAsState()
-    val selected by session.selectedChannel.collectAsState()
+    // Merge every channel into one timeline, dedup by messageId, sort by time.
+    val feed =
+        remember(messages) {
+            messages.values.flatten().distinctBy { it.messageId }.sortedBy { it.ts }
+        }
+    val agentCount = remember(feed) { feed.map { it.authorId }.filter { it != "@user" }.distinct().size }
 
-    Row(
+    Column(
         modifier =
             Modifier.fillMaxSize()
                 .clip(RoundedCornerShape(ForgeTheme.cornerRadius))
-                .background(ForgeTheme.panelBackground),
+                .background(ForgeTheme.panelBackground)
+                .padding(ForgeTheme.panelPadding),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        // Channel rail
-        Column(
-            modifier =
-                Modifier.width(96.dp)
-                    .fillMaxHeight()
-                    .background(ForgeTheme.sheetBackground)
-                    .padding(6.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            channels.forEach { ch ->
-                val isSel = ch.id == selected
-                Row(
-                    modifier =
-                        Modifier.fillMaxWidth()
-                            .clip(RoundedCornerShape(ForgeTheme.pillCorner))
-                            .background(
-                                if (isSel) ForgeTheme.panelBackgroundLight else Color.Transparent
-                            )
-                            .clickable { session.selectChannel(ch.id) }
-                            .padding(horizontal = 6.dp, vertical = 5.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        "${ch.icon ?: "•"} ${ch.title}",
-                        color = if (isSel) ForgeTheme.primaryText else ForgeTheme.secondaryText,
-                        fontSize = ForgeTheme.caption.size,
-                        fontWeight = ForgeTheme.label.weight,
-                        fontFamily = ForgeTheme.caption.family,
-                        maxLines = 1,
-                    )
-                }
-            }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            ForgeLabel("FORGE GUILD", ForgeTheme.primaryText)
+            androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
+            ForgeCaption(if (agentCount > 0) "$agentCount agents active" else "listening…", ForgeTheme.captionText)
         }
 
-        // Thread + input
-        Column(
-            modifier = Modifier.fillMaxSize().padding(ForgeTheme.panelPadding),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            ForgeLabel(selected, ForgeTheme.primaryText)
-
-            val thread = messages[selected].orEmpty()
-            val listState = rememberLazyListState()
-            LaunchedEffect(thread.size) {
-                if (thread.isNotEmpty()) listState.animateScrollToItem(thread.size - 1)
-            }
-            LazyColumn(
-                modifier = Modifier.fillMaxWidth().weight(1f),
-                state = listState,
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                items(thread) { MessageRow(it) }
-            }
-
-            QuickPrompts(session)
-            ChatInput(onSend = session::sendChat)
+        val listState = rememberLazyListState()
+        LaunchedEffect(feed.size) {
+            if (feed.isNotEmpty()) listState.animateScrollToItem(feed.size - 1)
         }
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            state = listState,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items(feed) { MessageRow(it) }
+        }
+
+        QuickPrompts(session)
+        ChatInput(onSend = session::sendChat)
     }
 }
 
@@ -177,19 +148,32 @@ private fun JsonCard(body: String) {
 
 @Composable
 private fun QuickPrompts(session: SessionState) {
-    val cameraReady by session.cameraReady.collectAsState()
     val snapping by session.snapshotInFlight.collectAsState()
+    val live by session.liveActive.collectAsState()
+    // No @mention — Gemini's server-side classifier routes to the right agents.
     val presets =
         listOf(
-            "@power why won't the BQ79616 wake?" to "@power",
-            "@firmware comms init check?" to "@firmware",
-            "@signal noise on the bus?" to "@signal",
+            "My BQ79616 won't power up and the ESP32 gets comm timeouts." to "won't power up",
+            "Is the cell-stack wiring at J3 correct?" to "check wiring",
+            "What should I probe first to debug the bus?" to "what to probe",
         )
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        // 🎙 Gemini Live duplex — voice + camera in, Gemini orchestrates the guild.
+        Button(
+            onClick = { session.toggleLive() },
+            colors =
+                ButtonDefaults.buttonColors(
+                    containerColor = if (live) ForgeTheme.riskHigh.copy(alpha = 0.30f) else ForgeTheme.riskLow.copy(alpha = 0.22f),
+                    contentColor = if (live) ForgeTheme.riskHigh else ForgeTheme.riskLow,
+                ),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+        ) {
+            Text(if (live) "⏹ Live" else "🎙 Go Live", fontSize = ForgeTheme.caption.size)
+        }
         // 📷 snapshot → /v2/snapshot; analysis returns as a card in #live-feed.
         Button(
             onClick = { session.captureAndAnalyze(note = null) },
-            enabled = !snapping, // tapping when !cameraReady triggers the in-VR permission prompt
+            enabled = !snapping, // tapping when !mediaReady triggers the in-VR permission prompt
             colors =
                 ButtonDefaults.buttonColors(
                     containerColor = ForgeTheme.accentLive.copy(alpha = 0.22f),
