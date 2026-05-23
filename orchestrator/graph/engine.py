@@ -232,12 +232,18 @@ class GraphEngine:
         """Call deps.summon_one, threading a per-tool-call emit when the seam
         supports it (real_summon_one does; stubs / test doubles need not). We
         introspect the callable so the GraphDeps contract stays back-compatible:
-        a 2-arg summon_one keeps working unchanged."""
+        a 2-arg summon_one keeps working unchanged.
+
+        We require an EXPLICIT `on_tool_call` parameter — a bare **kwargs callable
+        does not count, since it would silently swallow the callback (and never
+        stream) rather than honor the streaming contract."""
         fn = self.deps.summon_one
         try:
-            sig = inspect.signature(fn)
-            accepts_emit = "on_tool_call" in sig.parameters or any(
-                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+            params = inspect.signature(fn).parameters
+            accepts_emit = (
+                "on_tool_call" in params
+                and params["on_tool_call"].kind != inspect.Parameter.VAR_KEYWORD
+            )
         except (TypeError, ValueError):  # builtins / un-introspectable
             accepts_emit = False
         if accepts_emit:
