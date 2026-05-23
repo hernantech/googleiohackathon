@@ -1,7 +1,8 @@
 # 01 — LangGraph State Machine
 
 > Node-by-node spec for the Forge orchestrator graph.
-> Cross-refs: `00_wire_protocol.md` (event types), `02_sme_persona_format.md` (SmeResponse shape), `03_safety_gate_matrix.md` (SafetyGate behavior), `04_chat_bus_protocol.md` (client emission), `05_bench_daemon_api.md` (bench tool surface).
+> Cross-refs: `00_wire_protocol.md` (event types), `02_sme_persona_format.md` (SmeResponse shape), `03_safety_gate_matrix.md` (SafetyGate behavior), `04_chat_bus_protocol.md` (client emission), `05_board_knowledge_api.md` (knowledge-lookup + operator-step surface).
+> Model: the graph produces **operator instructions** and **knowledge lookups**, never hardware actuation. `proposedActions` with `actor="operator"` are steps the human performs; `actor="guild"` are read-only lookups the orchestrator runs. SafetyGate gates the instruction; the human reports "I did it" / "skipped".
 
 ---
 
@@ -18,10 +19,10 @@ class ForgeState(TypedDict):
     userId: str | None
 
     # ── perception ──
-    latestFrame: FrameRef | None                  # gs:// or in-mem id; updated by PerceptionGate
+    latestFrame: FrameRef | None                  # set by the FrameTap (00 §4), read by PerceptionGate
     latestTranscriptPartial: str | None
     latestTranscriptFinal: str | None
-    benchProfileId: str | None                    # see 05 §2 device profile
+    boardProfileId: str | None                    # see 05 §2 board profile (the board under test)
 
     # ── routing ──
     pendingSummon: SummonGuild | None             # input to ParallelSummonSMEs
@@ -126,7 +127,7 @@ ASCII edge labels match the conditional-edge function return values.
 
 **Input state delta**: one of
 - `Transcript(partial=False)` from Live
-- `FrameChunk` from Live binary channel
+- `FrameRef` published by the FrameTap (`00 §4`) — a frame sampled from the Live video stream, not a separate client upload
 - `SafetyInterrupt` from `@sentinel` (bypasses to LiveSpeaker via priority bus)
 - `ChatMessage(authorKind=USER)` from chat (typed input)
 
@@ -338,26 +339,28 @@ Output strict JSON:
 
 ### 3.7 SafetyGate
 
-**Purpose**: enforce the safety matrix (see `03_safety_gate_matrix.md`) on each `ProposedAction`.
+**Purpose**: enforce the safety matrix (see `03_safety_gate_matrix.md`) on each `ProposedAction`. The gate governs **what Forge instructs the human to do** — it never executes anything.
 
 **Input**: `state.mergedOpinion.proposedActions`.
 
-**Output**:
-- splits actions into `auto_allowed` and `needs_confirm`
-- for `needs_confirm`: emits `ConfirmationRequest` to chat AND to Live voice via `LiveSpeaker`; sets `state.pendingConfirmations[callId] = …`
-- waits (LangGraph interrupt) until `ConfirmationResponse` lands (HITL)
-- on `approved` → appends to `state.approvedActions`
-- on `denied` → drops action, emits `ChatMessage(#actions, "user denied <summary>")`
+**Behavior** (table-driven; `03 §3`):
+- `actor="guild"` lookups (read-only knowledge fetches) → always `allow`; run in-process via the KnowledgeAdapter, no card.
+- `actor="operator"` steps → split into `auto_allowed` (LOW: just shown in `#actions`) and `needs_confirm` (MEDIUM/HIGH).
+- For `needs_confirm`: before surfacing, **validate the step's values against the documented board limits** (`05 §4`, `get_documented_limit`). If a value exceeds the cited limit → `DENY`, emit `SafetyInterrupt(WARN)` naming the limit, do NOT show the card.
+- Otherwise emit `ConfirmationRequest` (with an `ActionCard` carrying the looked-up `documentedLimit`) to chat AND to Live voice via `LiveSpeaker`; set `state.pendingConfirmations[callId] = …`.
+- Wait (LangGraph interrupt) until `ConfirmationResponse` lands (HITL).
+- `approved=True` ("I did it") → append to `state.approvedActions`, record `operatorOutcome="done"` in the audit record.
+- `approved=False` ("skip") → drop the step, record `operatorOutcome="skipped"`, emit `ChatMessage(#actions, "operator skipped <summary>")`.
 
 **Prompt template**: none — table-driven (see 03 §3).
 
 **Error handling**:
-- no response within 60s → re-prompt user once via voice ("did you mean to approve?"); 60s further → auto-deny + log.
-- multiple pending confirmations: queued, surfaced one at a time in the UI to avoid action-card spam.
+- no response within `SAFETY_CONFIRM_TIMEOUT_S` (60s) → re-prompt once via voice ("did you do that step?"); +60s → record `operatorOutcome="timeout"` and continue (do not block the session).
+- multiple pending confirmations: queued, surfaced one at a time in the UI to avoid card spam (cap 3, `03 §3.3`).
 
 **Streaming**: no.
 
-**Checkpointing**: per-confirmation — replay must reproduce the exact prompt the user saw.
+**Checkpointing**: per-confirmation — replay must reproduce the exact instruction card the human saw.
 
 ---
 
@@ -396,9 +399,9 @@ orchestrator does. Your job:
 
 ### 4.1 SentinelSubgraph
 
-Runs in parallel as an `asyncio.Task` consuming the same `latestFrame` and `latestTranscriptFinal` from `ForgeState`. On hazard detection (smoke, sparks, alarming voltage trend, panicked user voice), emits a `SafetyInterrupt` event onto a priority bus that the LiveSpeaker AND the SafetyGate both subscribe to.
+Runs in parallel as an `asyncio.Task` consuming the same `latestFrame` (FrameTap output) and `latestTranscriptFinal` from `ForgeState`. On hazard detection (smoke, hot iron near a live board, panicked user voice), emits a `SafetyInterrupt` event onto a priority bus that the LiveSpeaker AND the SafetyGate both subscribe to.
 
-Authority to pre-empt voice: yes (see `03_safety_gate_matrix.md` §5).
+Authority to pre-empt voice: yes (see `03_safety_gate_matrix.md` §5). **Forge cannot power anything down** — there is no actuator. A `HALT` is a full-screen "POWER DOWN NOW" takeover plus a spoken command instructing the *human* to kill the PSU by hand, and it blocks all pending instruction cards until the human acks the hazard is cleared. A `WARN` is a sticky banner plus a spoken caution; the session continues.
 
 Cap on interruptions: one HALT per 60s; subsequent HALTs are coalesced to a single emission.
 
@@ -469,3 +472,31 @@ except Exception as e:
 ```
 
 The graph does NOT fail-stop — it surfaces errors via SafetyInterrupt and continues, because losing the guild mid-demo is worse than telling the user "consult failed, please retry."
+
+---
+
+## 8. Test cases (component-level — per node)
+
+Run: `pytest orchestrator/graph/tests/`. SMEs and Live are faked with deterministic doubles (canned `SmeResponse`s, a scripted transcript); checkpointer is `MemorySaver`. No network. Each node is exercised in isolation by constructing a `ForgeState` and asserting the returned state delta + emitted `outboundEvents`.
+
+**Design patterns under test:** single-writer reducer state, table-driven gate, HITL-interrupt resume, bounded retry, never-fail-stop error envelope.
+
+| ID | Node / edge | Test | Pass criterion |
+|---|---|---|---|
+| GR-1 | PerceptionGate | feed a `FrameRef` from a fake FrameTap → state updates `latestFrame`; emits a `CheckpointMarker` | `latestFrame` set; one marker emitted |
+| GR-2 | PerceptionGate | malformed transcript → logs + `Goodbye("perception_invalid")` only on that channel, graph survives | no exception escapes |
+| GR-3 | SupervisorRouter | utterance with `@power` mention → `pendingSummon.smes` contains `@power` (hard hint honored) | mention forced in |
+| GR-4 | SupervisorRouter | model returns bad JSON twice → falls back to `needs_guild=false`, routes to LiveSpeaker, logs `routing_failed` | fallback edge taken |
+| GR-5 | ParallelSummonSMEs | 3 SMEs, one exceeds `deadlineMs` → that SME recorded `confidence=0.0, claim="<timeout>"`, others complete | partial result, no hang |
+| GR-6 | StreamingAggregator | overflow the 64-delta bounded queue → deltas coalesce, no exception, `#live-feed` still advances | backpressure handled |
+| GR-7 | MergeOpinion | two SMEs, one `confidence<0.2` → excluded from merge, surfaced in `openQuestions` | exclusion holds |
+| GR-8 | DissentDetector | two SMEs disagree on a load-bearing claim → emits `DissentReport`, edge=`needs_more_rounds` once, then forced `converged` at round 2 | loop cap = 2 |
+| GR-9 | SafetyGate | `actor="guild"` lookup → auto-allow, no card, KnowledgeAdapter called | no `pendingConfirmations` entry |
+| GR-10 | SafetyGate | `actor="operator"` step value > documented limit → DENY + `SafetyInterrupt(WARN)`, no card shown | denial path; limit cited |
+| GR-11 | SafetyGate | HIGH operator step within limit → emits `ConfirmationRequest` w/ `ActionCard.documentedLimit`; interrupt; resume `approved=True` → `approvedActions` appended, audit `operatorOutcome="done"` | full HITL round-trip |
+| GR-12 | SafetyGate | resume `approved=False` → step dropped, audit `operatorOutcome="skipped"` | skip path |
+| GR-13 | SentinelSubgraph | inject a hazard frame → `SafetyInterrupt(HALT)`; assert NO actuation call exists anywhere, only the takeover + power-down instruction events | no actuator invoked |
+| GR-14 | Error envelope | force an exception inside MergeOpinion → graph emits `SafetyInterrupt(WARN, "internal error…")` and continues to LiveSpeaker | no fail-stop |
+| GR-15 | Checkpoint/replay | run to a SafetyGate interrupt, drop + reconnect same `sessionId` → pending `ConfirmationRequest` re-emitted, resume completes | replay reproduces the card |
+
+GR-11 and GR-15 are the seams that feed the system-level HITL test `08 §3.4`.

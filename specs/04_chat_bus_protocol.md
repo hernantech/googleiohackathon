@@ -20,7 +20,7 @@ Sec-WebSocket-Protocol: forge.chat.v2, bearer.<token>
 - `replayFrom` is optional; if absent, server replays the most recent N=200 chat messages.
 - Auth token rides in `Sec-WebSocket-Protocol` (see `00_wire_protocol.md` §8). Server-selected subprotocol is `forge.chat.v2`.
 
-Inside the WS, only the JSON channel is used. Audio rides on the separate Gemini Live WS (channel B). The chat bus carries no binary frames.
+Inside the WS, only the JSON channel is used. Audio AND video ride on the separate Gemini Live WS (channel B); the chat bus carries no binary frames and the client never uploads a separate frame stream — frames are tapped server-side from channel B (`00 §4`). Camera frames reach the UI only as `FrameRef` thumbnails/links inside `ChatMessage`s.
 
 ---
 
@@ -32,14 +32,14 @@ Channels are server-defined. The client cannot create channels; it can only subs
 |---|---|---|---|
 | `#live-feed` | live, system | What Gemini Live is saying, plus aggregated SME headlines | mute only |
 | `#user` | user | User's typed messages (voice transcripts also mirrored here) | always on |
-| `#actions` | system, sme | Action proposals, confirmations, results, denials | mute only |
+| `#actions` | system, sme | Operator instructions, confirmations ("I did it"/"Skip"), outcomes | mute only |
 | `#dissent` | system | DissentReport messages | mute only |
 | `#scribe` | sme(@scribe), system | Continuous session report excerpts | mute only |
 | `#sentinel` | sme(@sentinel), system | Sentinel observations (non-HALT) | mute only |
 | `#<sme-id>` | sme(@`<sme-id>`), user | per-SME deliberation channel | mute only |
 | `#general` | any | Catch-all for messages outside a deliberation | always on |
 
-`<sme-id>` mirrors the roster: `#power`, `#signal`, `#firmware`, `#layout`, `#librarian`, `#sourcing`, `#reverse`, `#sentinel`, `#scribe`, `#bench-tech`, `#tutor`.
+`<sme-id>` mirrors the roster: `#power`, `#signal`, `#firmware`, `#layout`, `#librarian`, `#sourcing`, `#reverse`, `#sentinel`, `#scribe`, `#tutor`. (No `#bench-tech` — that SME is removed; nothing actuates the bench.)
 
 The orchestrator emits a `ChannelList` message at connection time so the client knows what to render:
 
@@ -77,7 +77,7 @@ Every chat message arrives as a `ChatMessage` (`00 §2.1`). The renderer dispatc
 |---|---|---|
 | `SmeResponse` | SME response card: confidence chip, claim headline, expandable rationale, evidence chips, proposed-action chips | `#<sme-id>` (primary), mirror to `#live-feed` (collapsed) |
 | `DissentReport` | Side-by-side pair view; one card per `DissentPair` plus a summary banner | `#dissent` |
-| `ActionCard` | Approve/Deny card (see `03 §4`); carried inside a ConfirmationRequest's `actionCardJson` field but ALSO mirrored into `#actions` for context | `#actions` |
+| `ActionCard` | Operator InstructionCard with "I did it" / "Skip" (see `03 §4`); shows the documented-limit citation; carried inside a ConfirmationRequest's `actionCardJson` field but ALSO mirrored into `#actions` for context | `#actions` |
 | `ToolResult` (for user-visible tools) | result snippet with the tool name and a copy-to-clipboard JSON link | `#actions` |
 | `SafetyInterrupt` (WARN tier — HALT is a takeover, not a card) | yellow banner with reason + suggested recover actions chips | top of every channel (sticky 10s) |
 | `EvidenceRef` (rare standalone) | thumbnail or external-link chip | wherever requested |
@@ -179,7 +179,7 @@ Client may send:
 - `Hello` (once at open)
 - `Goodbye` (once at close)
 - `ChatMessage(authorKind=USER)` — typed user input
-- `ConfirmationResponse` — user tapping Approve/Deny
+- `ConfirmationResponse` — user tapping "I did it" / "Skip" on an InstructionCard
 - `Subscribe(channelId)` / `Unsubscribe(channelId)` — for muting (server still ships ALL messages; mute is a client preference but server logs it for ranking)
 - `Pong`
 
@@ -267,3 +267,26 @@ Out of scope for v2: emoji reactions, file uploads from client, voice notes (Liv
 - Should `#dissent` and `#actions` be merged into a single `#deliberation` channel? Argument for: less channel-switching during a 3-minute demo. Argument against: dissent is the load-bearing showpiece for the prize criterion.
 - Should the client get a per-message "react" affordance (👍/👎) that feeds back into MergeOpinion's confidence? Punted — v2.5.
 - Replay window of N=200: enough for a 3-minute demo, maybe not for a 30-minute session. Consider checkpoint-anchored replay (which we have) as the primary path and `N=200` as the fallback.
+
+---
+
+## 13. Test cases (component-level — chat-bus framing)
+
+Run: `pytest orchestrator/chat_bus/tests/`. Driven with an in-memory WS pair (no network); the server side is the real `ws.py`, the client side is a test harness that records events.
+
+**Design patterns under test:** pub/sub fan-out with bounded queues, idempotent ULID dedup, streaming-delta assembly, forward-compatible rendering.
+
+| ID | Test | Pass criterion |
+|---|---|---|
+| CB-1 | On connect, server emits `ChannelList` whose `#<sme>` channels equal the roster in `02`/`07` (and contain no `#bench-tech`) | sets equal |
+| CB-2 | Streaming: `ChatMessage(streaming=true)` then 5 `ChannelUpdate`s then `done=true` → client reconstructs the full body in order | body matches |
+| CB-3 | `ChannelUpdate` for an unknown messageId → buffered ≤2 s then dropped, no crash | buffered/dropped |
+| CB-4 | Idempotency: replay re-sends a message with the same ULID → client renders once | dedup holds |
+| CB-5 | Backpressure: flood >256 events → server drops `ChannelUpdate` before `ChatMessage` and emits `BackpressureNotice` | priority preserved |
+| CB-6 | InstructionCard round-trip: a `ConfirmationRequest` with `actionCardJson` → client parses `ActionCard`, renders "I did it"/"Skip", sends `ConfirmationResponse(approved=True)` on affirm | labels + response correct |
+| CB-7 | Reconnect with same `sessionId` → `ChannelList` + last N=200 messages + any pending `ConfirmationRequest` re-emitted + `ReplayDone` | replay contract holds |
+| CB-8 | Unknown `kind` in an `application/json` body → renders collapsed-JSON fallback, no exception | forward-compatible |
+| CB-9 | Auth/version: `Hello` with mismatched major `protocolVersion` → `ErrorEvent("protocol_mismatch")` then `Goodbye` + close | rejected cleanly |
+| CB-10 | Heartbeat: server `Ping` every 20 s; missing 2 `Pong`s → server marks WS dead | liveness works |
+
+CB-6 and CB-7 are the seams reused by the system-level UI-contract test `08 §3.3`.

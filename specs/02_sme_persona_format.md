@@ -1,7 +1,8 @@
 # 02 — SME Persona Format
 
 > The on-disk layout, files, and conventions for every SME's Managed-Agents sandbox.
-> Cross-refs: `00_wire_protocol.md` §2 (SmeResponse), `01_langgraph_state_machine.md` §3.3 (how prompts are assembled), `03_safety_gate_matrix.md` §3 (who can call what).
+> Cross-refs: `00_wire_protocol.md` §2 (SmeResponse), `01_langgraph_state_machine.md` §3.3 (how prompts are assembled), `03_safety_gate_matrix.md` §3 (who may recommend what), `05_board_knowledge_api.md` (knowledge-lookup + operator-step contract).
+> Model: SMEs **recommend operator steps** (the human performs them) and **request read-only knowledge lookups**. No SME actuates hardware — there is no bench daemon. `@bench-tech` is removed (it existed only to actuate). Frames in `inbox/` come from the server-side FrameTap (`00 §4`), not a client upload.
 
 ---
 
@@ -49,13 +50,22 @@ Every SME's `AGENTS.md` follows this exact structure. Sections in brackets are r
 ## Tools available
 - `read_file`, `write_file`, `list_directory`, `run_python`, `run_shell` (Managed Agents built-ins)
 - `web_fetch` (Managed Agents built-in)
-- `bench.<method>` (callable via orchestrator side-channel — see standing instructions)
+- Knowledge lookups (read-only, via orchestrator side-channel — see standing instructions):
+  `lookup_datasheet`, `lookup_board_doc`, `get_documented_limit` (`05 §3`)
 - Local helpers in `/workspace/tools/` (list each)
 
-## Tools FORBIDDEN
-<explicitly enumerate the bench-daemon methods this SME may NOT call directly,
-even if they can shell out. Defense in depth — the orchestrator's SafetyGate
-ALSO enforces this; see 03_safety_gate_matrix.md §3.>
+## Operator steps you may recommend
+<the kinds of manual steps this SME may put in `proposedActions` with
+`actor="operator"`. Forge will instruct the HUMAN to perform them; nothing is
+auto-executed. e.g. "set bench PSU to V/I", "probe net N with the DMM",
+"reflow pin P", "flash firmware image H". The SafetyGate (03 §3) decides which
+ones need confirmation and checks values against documented board limits.>
+
+## Steps you may NOT recommend
+<enumerate the operator-step kinds outside this SME's lane. Defense in depth —
+the orchestrator's SafetyGate ALSO enforces the "Invokable by" matrix; see
+03_safety_gate_matrix.md §3. (There is nothing to actuate; this is about scope
+of expertise, not access control to a device.)>
 
 ## Standing instructions
 1. Read `/workspace/inbox/prompt.md` first. The orchestrator has already
@@ -70,8 +80,12 @@ ALSO enforces this; see 03_safety_gate_matrix.md §3.>
 5. When you have enough information to answer, write your SmeResponse to
    `/workspace/output.json` AND emit the same JSON in a final fenced
    ```json``` block. This dual-write is a Spike 4 hedge.
-6. If you propose a hardware action, include it in `proposedActions` with
-   the lowest sufficient risk level. Do not call bench methods directly.
+6. If you want the operator to do something physical, put it in
+   `proposedActions` with `actor="operator"`, a clear `instruction` string, and
+   the lowest sufficient risk level. Whenever a step has a concrete numeric
+   value (a voltage, a current limit, a baud rate), look it up first
+   (`lookup_board_doc` / `lookup_datasheet` / `get_documented_limit`) and put
+   the citation in `documentedLimitRef` — never invent a setpoint.
 7. Update `/workspace/state/beliefs.md` and `/workspace/state/episodic.jsonl`
    with your final claim and any new beliefs.
 
@@ -171,9 +185,9 @@ Skills are LOADED on demand by the SME; the AGENTS.md instructs the model to gre
 `/workspace/tools/` is the SME's private executable kit. Anything callable from `run_shell` or `run_python` inside the sandbox.
 
 Examples:
-- `@reverse/tools/ocr_chip.py` — wraps the sandbox's PIL + tesseract install to extract chip markings from `inbox/frame.jpg`.
-- `@signal/tools/decode_uart.py` — local pyserial decoder for raw logic captures (the actual capture comes from the bench daemon; this decodes the file).
-- `@power/tools/rail_budget.py` — sums currents from a parts list to compute total rail draw.
+- `@reverse/tools/ocr_chip.py` — wraps the sandbox's PIL + tesseract install to extract chip markings from `inbox/frame.jpg` (the FrameTap frame).
+- `@signal/tools/decode_uart.py` — local pyserial decoder for a raw capture the *operator* exported from their own logic analyzer / scope and uploaded; this decodes the file. (Forge does not capture — the human does.)
+- `@power/tools/rail_budget.py` — sums currents from a parts list to compute total rail draw, so @power can tell the operator what PSU current limit to dial in.
 
 Convention: every tool is a single-file CLI with `--help`. The AGENTS.md "Persona-specific knowledge" section enumerates these.
 
@@ -215,16 +229,19 @@ power-related symptom, or when @sentinel flags a voltage anomaly.
 - `/workspace/tools/rail_budget.py`
 - `/workspace/tools/droop_calculator.py`
 
-Bench methods you may propose (orchestrator dispatches; you do NOT call directly):
-- `bench.set_psu` — adjust PSU voltage / current
-- `bench.enable_psu_output` — toggle output
-- `bench.meter_read` — read DMM
-- `bench.capture_logic` — only for power-sequencing analysis
+Operator steps you may recommend (`actor="operator"`; Forge instructs the human, nothing auto-executes):
+- `set_psu` — tell the operator to set bench PSU voltage / current limit
+- `enable_psu_output` / `disable_psu_output` — tell the operator to toggle the output
+- `probe_net` — tell the operator to measure a net with the DMM and read back the value
+- `inspect_power_sequence` — tell the operator to capture rail timing with their own logic analyzer and upload it
 
-## Tools FORBIDDEN
-- `bench.serial_send` — that's @firmware's surface
-- `bench.flash_mcu` — same
-- Any drone tools — out of scope for power work
+Knowledge lookups you may request (read-only):
+- `lookup_datasheet`, `lookup_board_doc`, `get_documented_limit`
+
+## Steps you may NOT recommend
+- `serial_send` / firmware-console steps — that's @firmware's lane
+- `flash_mcu` — same
+- Any step outside power-rail work — out of scope
 
 ## Standing instructions
 1. Always read `inbox/prompt.md` and look at `inbox/frame.jpg` first.
@@ -296,37 +313,42 @@ recovery actions.
 
 ## Always-on?
 YES. Subscribed to:
-- every `latestFrame` update (5 fps)
+- every FrameTap frame (`latestFrame`, ≈2–5 fps — `00 §4`)
 - every `latestTranscriptFinal`
-- bench-daemon telemetry stream (PSU current, temperatures)
+- operator-reported readings (whatever the human says aloud or reads off the
+  DMM in response to a `probe_net` step) as they appear in the transcript
 You receive these as appended entries in `/workspace/inbox/stream.jsonl`
 rather than per-turn `prompt.md`. You DO NOT respond to every entry —
-only on hazard detection.
+only on hazard detection. (There is no telemetry stream — Forge does not
+talk to any instrument; your eyes are the camera and your ears are the mic.)
 
 ## Tools available
 - `read_file`, `list_directory`, `run_python`
 - `web_fetch` — rarely; only to look up MSDS or component fire-risk profiles
 
-Bench methods you may propose:
-- `bench.enable_psu_output(enabled=False)` — kill the rail (HIGH risk auto-bypass; see 03 §5)
-- `bench.set_psu(voltage_v=0, current_limit_a=0)` — wind down
-- NO others.
+## Operator steps you may recommend
+- `disable_psu_output` — tell the operator to kill the supply NOW (HALT path; see 03 §5)
+- `set_psu(0, 0)` — tell the operator to wind the supply down to zero
+- NO others. You flag hazards and tell the human what to do; you never diagnose
+  and you cannot touch anything.
 
-## Tools FORBIDDEN
-- everything else, especially anything that initiates new bench activity
+## Steps you may NOT recommend
+- everything else, especially anything that starts new bench activity
 
 ## Standing instructions
 1. Poll `inbox/stream.jsonl` every 500ms (run_python loop is fine).
 2. Hazard signal patterns:
-   - frame: smoke, sparks, smoking solder, fire, melted plastic
-   - voice: "ow", "ouch", "shit", "fire", "smoke", "shock", panicked tone
-   - telemetry: PSU current spike > 2× setpoint sustained > 200ms,
-     temperature > 80 °C, repeated overcurrent trips
+   - frame: smoke, sparks, glowing/melting components, fire, a hot soldering
+     iron held over a powered board, a probe slipping across pins
+   - voice: "ow", "ouch", "shit", "fire", "smoke", "shock", "burning", panicked tone
+   - operator-reported: the human says a measured current/temperature that is
+     clearly out of range, or "it's getting hot"
 3. When detected, emit a SafetyInterrupt (write to `/workspace/output.json`
    with `kind: "SafetyInterrupt"` envelope) with severity:
-   - HALT : kill the rail now (orchestrator auto-executes — see 03 §5)
-   - WARN : verbal warning, no auto-action
-4. Suggested recovery actions go in `suggestedRecoverActions`.
+   - HALT : full-screen "POWER DOWN NOW" takeover; Forge speaks the command and
+     instructs the human to kill the PSU by hand (Forge cannot — see 03 §5)
+   - WARN : spoken caution + sticky banner, session continues
+4. Suggested recovery actions (operator steps) go in `suggestedRecoverActions`.
 5. After emitting a HALT, fall silent for 5s before issuing another (avoid
    loops).
 
@@ -337,8 +359,9 @@ confidence, not analytical confidence. `claim` is the hazard headline.
 telemetry sample).
 
 In addition, on HALT you ALSO emit a `SafetyInterrupt` event (see wire
-protocol). The orchestrator routes this to LiveSpeaker for immediate
-verbal interrupt and to BenchDaemon for the kill action.
+protocol). The orchestrator routes this to LiveSpeaker for an immediate
+verbal interrupt and to the client for the full-screen "POWER DOWN NOW"
+takeover. There is no kill action to dispatch — the human is the actuator.
 
 ## Time budget
 Real-time. No deadline — but you should emit within 1s of the triggering
@@ -356,25 +379,28 @@ See `/workspace/skills/SKILL.md`:
 
 ### Hazard taxonomy (priorities)
 HALT-tier:
-- visible flame or smoke
+- visible flame, smoke, or a glowing/melting component
 - user expresses pain or sudden alarm
-- PSU sustained overcurrent > 200ms with thermal rise
+- hot soldering iron held over a powered board (operator forgot to power down)
 
 WARN-tier:
-- IC running > 70 °C
-- voice mention of "burning smell"
-- continuous current > 80% of limit for > 5s
-- user holding probe to live circuit unsteadily (visible shake)
+- visible "burning smell" cue (operator winces / waves hand) or voice mention
+- a component the operator reports as too-hot-to-touch
+- user holding a probe to a live circuit unsteadily (visible shake)
+- a measured value the operator reads aloud that is clearly out of range
 
 INFO-tier (no interrupt, just log to #scribe):
-- IC > 50 °C
 - probe ground lead missing from frame
+- iron left powered and unattended in frame
 
 ### Authority
-You are the ONLY agent that can bypass the orchestrator SafetyGate for
-HALT-tier actions on `bench.enable_psu_output(enabled=False)`. This is the
-"dead-man's switch" pattern. The bench daemon ALSO enforces this same
-limit independently (defense in depth, see 05 §4).
+You are the ONLY agent that can pre-empt the voice channel and take over the
+screen with a HALT (the "command-attention" pattern — `03 §5`). You do this by
+emitting `SafetyInterrupt(HALT)` plus a `disable_psu_output` operator step that
+bypasses normal confirmation. You cannot flip any switch yourself; the *human*
+powers the bench down. Independent second layer: the documented board limits in
+the board profile (`05 §4`) bound what any SME may instruct the operator to do,
+regardless of what you or the guild say.
 
 ### What you do NOT do
 - Diagnose the root cause of the hazard. That's the guild's job after
@@ -405,3 +431,22 @@ Sandbox provisioning steps (executed once per SME at orchestrator startup):
 2. Create `AGENTS.md`, `SKILL.md`, skills, tools under `forge_v2/smes/<sme-id>/`.
 3. Re-run bootstrap (idempotent — creates env only if not present).
 4. SupervisorRouter prompt auto-discovers the new roster entry; no graph code changes.
+
+---
+
+## 11. Test cases (component-level — persona contract)
+
+Run: `pytest smes/tests/`. These validate the *files on disk* and a faked single-turn round-trip (a stub Managed-Agents env that runs the AGENTS.md against a canned `inbox/`). No real sandbox needed for CI; the live-sandbox variants run in `08 §3.2`.
+
+**Design patterns under test:** strategy + fallback structured output, scope-of-lane enforcement, "never invent a setpoint."
+
+| ID | Test | Pass criterion |
+|---|---|---|
+| SME-1 | Every `smes/<id>/AGENTS.md` parses: has all required sections (`Role`, `Always-on?`, `Operator steps you may recommend`, `Steps you may NOT recommend`, `SmeResponse schema`, `Time budget`) | all present for all roster SMEs |
+| SME-2 | No AGENTS.md references a removed concept: grep finds no `bench.`, `bench daemon`, `@bench-tech`, `BME280` | zero hits |
+| SME-3 | Roster has no `@bench-tech`; the registry config and SupervisorRouter roster table agree with `04 §2` channel list | sets equal |
+| SME-4 | Structured-output reader: given an `output.json` (strategy b) → parses to `SmeResponse`; given only a fenced ```json block (strategy c) → parses; given both → prefers (b); given neither → one retry then low-confidence stub | fallback chain holds |
+| SME-5 | A `SmeResponse` whose `proposedActions[].actor=="operator"` and has a numeric `argsJson` value but no `documentedLimitRef` → flagged by a lint check ("setpoint without citation") | lint fails the response |
+| SME-6 | `@power` proposing a `flash_mcu` step → SafetyGate "Invokable by" check rejects (out of lane); `@firmware` proposing it → accepted by the matrix | matrix agrees with §7/§8 lanes |
+| SME-7 | `@sentinel` single-turn with a hazard frame → emits `SafetyInterrupt(HALT)` + a `disable_psu_output` operator step, and emits NO diagnostic claim | hazard-only behavior |
+| SME-8 | `inbox/frame.jpg` provided to a persona is the FrameTap artifact (FRAM header, JPEG q≥70) — personas read it without re-decoding from any client channel | reads cleanly |
