@@ -1,11 +1,33 @@
-# Xcode build output / derived data
+# ── Xcode build output & derived data ────────────────────
 build/
 DerivedData/
-*.xcuserstate
-xcuserdata/
+*.hmap
+*.ipa
+*.dSYM
+*.dSYM.zip
 
-# Local, environment-specific config (orchestrator URL, auth token overrides)
+# ── Xcode user-specific files ─────────────────────────────
+*.xcuserstate
+*.xcuserdatad
+*.xccheckout
+*.moved-aside
+xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcworkspace/xcuserdata/
+timeline.xctimeline
+*.playground/
+
+# ── Swift Package Manager ─────────────────────────────────
+.swiftpm/
+.build/
+Package.resolved
+
+# ── Local, environment-specific config ────────────────────
+# (orchestrator URL, auth token overrides — never commit)
 Forge.xcconfig
 
-# macOS
+# ── macOS noise ───────────────────────────────────────────
 .DS_Store
+.AppleDouble
+.LSOverride
