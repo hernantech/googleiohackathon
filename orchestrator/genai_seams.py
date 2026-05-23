@@ -18,6 +18,7 @@ import functools
 import json
 import logging
 import os
+import re
 
 from orchestrator.graph.state import DissentResult, GraphDeps, RouteDecision
 from orchestrator.knowledge import KnowledgeAdapter
@@ -32,11 +33,10 @@ SNAPSHOT_MODEL = os.getenv("GEMINI_SNAPSHOT_MODEL", "gemini-3-pro-preview")
 ANTIGRAVITY_AGENT = os.getenv("ANTIGRAVITY_AGENT", "antigravity-preview-05-2026")
 SME_ROSTER = "@power @signal @firmware @layout @librarian @sourcing @reverse @sentinel @scribe @tutor"
 
-#: Persona / lane per SME (spec 02). Used as the system-instruction so each SME
-#: stays in its lane — the Managed-Agents-faithful equivalent of its AGENTS.md
-#: "Role" section. (We run SMEs as fast Flash calls, not the ~70s-cold
-#: Antigravity sandbox; structuring system-vs-input mirrors interactions.create
-#: so the path can be swapped to the Antigravity API later — see build_real_deps.)
+#: Persona / lane per SME (spec 02). Becomes the managed-agent system instruction
+#: (the AGENTS.md "Role" section), keeping each SME in its lane. Each SME is a
+#: real managed agent summoned via the Interactions API (see _summon_text); a
+#: fast Flash call is the fallback when managed agents are unavailable.
 SME_ROLES = {
     "@power": "Power Engineer — rails, regulators, decoupling, transient response, thermal headroom",
     "@signal": "Signal-Integrity Engineer — buses, termination, scope/logic captures, comm integrity",
@@ -51,6 +51,9 @@ SME_ROLES = {
 }
 
 _client = None
+#: smeId -> warm managed-agent environment_id, reused across turns so the
+#: sandbox cold-start is paid once. Populated by prewarm_smes() / first summon.
+_sme_env: dict[str, str] = {}
 
 
 def _genai():
@@ -173,13 +176,97 @@ def _wrap_action(pa: object, claim: str, knowledge: KnowledgeAdapter | None) -> 
         documentedLimitRef=ref)]
 
 
+def _managed_available() -> bool:
+    """Whether to use the managed-agents Interactions API. Opt out with
+    FORGE_USE_MANAGED_AGENTS=0; otherwise gated on the SDK exposing `.interactions`."""
+    if os.getenv("FORGE_USE_MANAGED_AGENTS", "1") == "0":
+        return False
+    try:
+        return hasattr(_genai(), "interactions")
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _loads_loose(text: str) -> dict:
+    """Parse a JSON object out of an agent reply: pure JSON, a fenced ```json
+    block, or an object embedded in prose."""
+    text = (text or "").strip()
+    try:
+        return json.loads(text)
+    except Exception:  # noqa: BLE001
+        pass
+    m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.S) or re.search(r"(\{.*\})", text, re.S)
+    if m:
+        return json.loads(m.group(1))
+    raise ValueError("no JSON object in agent output")
+
+
+def _summon_text(system_instruction: str, user_input: str, sme_id: str) -> str:
+    """Get one SME turn's text.
+
+    PRIMARY: the managed-agents Interactions API — a real sandboxed agent
+    (`antigravity-preview-05-2026`) whose per-SME environment is reused across
+    turns (warm after the first call / prewarm) so deliberation stays responsive.
+    FALLBACK: a fast Flash call. Both carry the same persona (system instruction)
+    and grounded briefing (input)."""
+    client = _genai()
+    if _managed_available():
+        env = _sme_env.get(sme_id) or "remote"
+        it = client.interactions.create(
+            agent=ANTIGRAVITY_AGENT,
+            input=user_input,
+            system_instruction=system_instruction,
+            environment=env,
+        )
+        new_env = getattr(it, "environment_id", None)
+        if new_env:
+            _sme_env[sme_id] = new_env  # reuse the warm sandbox next turn
+        log.info("summon %s via MANAGED AGENT (%s, env=%s)", sme_id, ANTIGRAVITY_AGENT,
+                 _sme_env.get(sme_id, env))
+        return getattr(it, "output_text", None) or _interaction_text(it) or ""
+    log.debug("summon %s via Flash fallback (managed agents unavailable)", sme_id)
+    r = client.models.generate_content(
+        model=FLASH_MODEL,
+        contents=f"{system_instruction}\n\n{user_input}",
+        config={"response_mime_type": "application/json"},
+    )
+    return r.text or ""
+
+
+def prewarm_smes(roster: list[str] | None = None) -> dict[str, str]:
+    """Provision + cache one managed-agent environment per SME so the first live
+    summon is warm (pays the sandbox cold-start up front, off the critical path).
+    No-op (returns {}) when managed agents are unavailable. Safe to call
+    repeatedly; intended to run once at startup (e.g. a background task)."""
+    if not _managed_available():
+        return {}
+    client = _genai()
+    for sme in (roster or SME_ROSTER.split()):
+        if sme in _sme_env:
+            continue
+        try:
+            it = client.interactions.create(
+                agent=ANTIGRAVITY_AGENT,
+                input="warmup — reply 'ready'.",
+                system_instruction=f"You are {sme}.",
+                environment="remote",
+            )
+            env = getattr(it, "environment_id", None)
+            if env:
+                _sme_env[sme] = env
+        except Exception as e:  # noqa: BLE001
+            log.warning("prewarm_smes(%s) failed (%s)", sme, e)
+    return dict(_sme_env)
+
+
 def real_summon_one(sme_id: str, summon: SummonGuild, knowledge: KnowledgeAdapter | None = None) -> SmeResponse:
-    """Summon one SME. Runs as a fast gemini-3.5-flash call (not the ~70s-cold
-    Antigravity sandbox; see ROADMAP). The persona is the system instruction and
-    the orchestrator-assembled `summon.briefing` (question + board facts + limits
-    + snapshot, see GraphEngine._build_briefing) is the grounded input — this is
-    what gives the SME *proper context*. We build the SmeResponse envelope
-    ourselves and attach the documented-limit citation to any proposed step."""
+    """Summon one SME as a **managed agent** (Antigravity Interactions API;
+    Flash fallback). The persona (SME_ROLES) is the agent's system instruction
+    and the orchestrator-assembled `summon.briefing` (question + board facts +
+    limits + snapshot, see GraphEngine._build_briefing) is the grounded input —
+    this is what gives the SME *proper context*. The SmeResponse envelope is
+    built here and the documented-limit citation is attached to any proposed
+    step (never invented by the model — 03 §3.3.6)."""
     try:
         role = SME_ROLES.get(sme_id, "a specialist SME")
         siblings = [s for s in summon.smes if s != sme_id]
@@ -199,16 +286,11 @@ def real_summon_one(sme_id: str, summon: SummonGuild, knowledge: KnowledgeAdapte
             '"instruction": "<imperative step for the operator>", "risk": "LOW|MEDIUM|HIGH"}}. '
             "Use proposedAction only when a concrete operator step is warranted; else null."
         )
-        prompt = (
-            f"{system}\n\n=== Guild brief ===\n{brief}\n\n"
+        user_input = (
+            f"=== Guild brief ===\n{brief}\n\n"
             f"Other SMEs consulted in parallel: {siblings or 'none'}\n\n{instructions}"
         )
-        r = _genai().models.generate_content(
-            model=FLASH_MODEL,
-            contents=prompt,
-            config={"response_mime_type": "application/json"},
-        )
-        d = json.loads(r.text)
+        d = _loads_loose(_summon_text(system, user_input, sme_id))
         conf = min(max(float(d.get("confidence", 0.5)), 0.0), 1.0)
         claim = str(d.get("claim", "")).strip() or f"{sme_id}: (no claim)"
         return SmeResponse(

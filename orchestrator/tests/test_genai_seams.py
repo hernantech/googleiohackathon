@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import types
 
+import pytest
+
 from orchestrator import genai_seams as gs
 from orchestrator.knowledge import KnowledgeAdapter
 from orchestrator.proto.events import SummonGuild
@@ -91,3 +93,81 @@ def test_falls_back_to_stub_on_error(monkeypatch):
     monkeypatch.setattr(gs, "_genai", lambda: _Boom())
     resp = gs.real_summon_one("@power", _summon("b"))
     assert "[stub]" in resp.claim  # never-fail-stop (01 §7)
+
+
+# ── managed-agents (Interactions API) path ──────────────────────────────────
+
+@pytest.fixture(autouse=True)
+def _clear_env():
+    gs._sme_env.clear()
+    yield
+    gs._sme_env.clear()
+
+
+class _ManagedClient:
+    """A client exposing `.interactions.create` (the managed-agents surface)."""
+    def __init__(self, text: str, env_id: str = "env-1"):
+        self._text, self._env, self.calls = text, env_id, []
+        outer = self
+
+        class _Inter:
+            def create(self, **kw):
+                outer.calls.append(kw)
+                return types.SimpleNamespace(output_text=outer._text, environment_id=outer._env)
+
+        self.interactions = _Inter()
+
+
+def test_uses_interactions_create_when_available(monkeypatch):
+    c = _ManagedClient(json.dumps({"confidence": 0.9, "claim": "Missing stack.", "rationale": "§7"}),
+                       env_id="env-power")
+    monkeypatch.setattr(gs, "_genai", lambda: c)
+    resp = gs.real_summon_one("@power", _summon("Operator said: comm timeout"))
+    kw = c.calls[0]
+    assert kw["agent"] == gs.ANTIGRAVITY_AGENT
+    assert "Operator said: comm timeout" in kw["input"]   # grounded briefing as input
+    assert "Power Engineer" in kw["system_instruction"]   # persona as system instruction
+    assert kw["environment"] == "remote"                  # first call provisions
+    assert resp.claim == "Missing stack." and abs(resp.confidence - 0.9) < 1e-6
+    assert gs._sme_env["@power"] == "env-power"            # warm env cached
+
+
+def test_reuses_warm_env_on_second_summon(monkeypatch):
+    c = _ManagedClient(json.dumps({"confidence": 0.8, "claim": "c", "rationale": "r"}), env_id="env-1")
+    monkeypatch.setattr(gs, "_genai", lambda: c)
+    gs.real_summon_one("@power", _summon("b"))
+    gs.real_summon_one("@power", _summon("b"))
+    assert [k["environment"] for k in c.calls] == ["remote", "env-1"]  # 2nd reuses warm env
+
+
+def test_managed_disabled_via_env_uses_flash(monkeypatch):
+    monkeypatch.setenv("FORGE_USE_MANAGED_AGENTS", "0")
+    c = _ManagedClient("unused")          # has .interactions ...
+    captured: dict = {}
+
+    class _Models:
+        def generate_content(self, model, contents, config=None):
+            captured["contents"] = contents
+            return types.SimpleNamespace(text=json.dumps({"confidence": 0.5, "claim": "flash", "rationale": "r"}))
+
+    c.models = _Models()                  # ... and .models
+    monkeypatch.setattr(gs, "_genai", lambda: c)
+    resp = gs.real_summon_one("@power", _summon("Operator said: x"))
+    assert c.calls == []                  # interactions NOT used when opted out
+    assert resp.claim == "flash"          # came via Flash
+    assert "Power Engineer" in captured["contents"]
+
+
+def test_managed_loose_json_in_prose(monkeypatch):
+    c = _ManagedClient('Analysis:\n```json\n{"confidence":0.7,"claim":"ok","rationale":"r"}\n```\nDone.')
+    monkeypatch.setattr(gs, "_genai", lambda: c)
+    resp = gs.real_summon_one("@power", _summon("b"))
+    assert resp.claim == "ok" and abs(resp.confidence - 0.7) < 1e-6
+
+
+def test_prewarm_caches_envs(monkeypatch):
+    c = _ManagedClient(json.dumps({"confidence": 0.5, "claim": "ready", "rationale": "r"}), env_id="warm")
+    monkeypatch.setattr(gs, "_genai", lambda: c)
+    out = gs.prewarm_smes(["@power", "@signal"])
+    assert out == {"@power": "warm", "@signal": "warm"}
+    assert len(c.calls) == 2
