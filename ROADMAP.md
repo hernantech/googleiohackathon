@@ -14,8 +14,9 @@ this file (sequencing). If they disagree, the spec wins; fix this file.
 
 - ✅ Orchestrator backbone **P0–P7** merged to `main` (`orchestrator/`, 127 tests, deterministic, offline).
 - ✅ Deploy pipeline live: GitHub Actions builds `linux/arm64` → GHCR → SSH-deploys to Azure VM `galois-cloud-vm-2` (westus2, aarch64). Secrets set (`VM_*`, `GEMINI_API_KEY`).
-- ✅ A placeholder scaffold (`forge_v2/`) is currently what deploys and serves `/healthz` at `http://20.230.188.247:8080`. **Phase 2 replaces it with the real `orchestrator/`.**
-- ⛔ The real `orchestrator/` has **no serving surface** (no `main.py`/FastAPI) and its **4 model seams are stubs**. That's the work below.
+- ✅ **Phase 1 done** — FastAPI serving surface (`main.py`, `seams.py`, `chat_bus/ws.py`, `config.py`); 127 tests green + TestClient smoke.
+- ✅ **Phase 2 done** — real `orchestrator/` containerized (root `Dockerfile`) and **deployed**; `forge_v2/` scaffold retired. Live at `http://20.230.188.247:8080` (`/healthz`, `/v2/chat`, `/v2/live`, `/v2/snapshot`), running in **stub mode**.
+- ⛔ Next: the **4 model seams are stubs** (Phase 3) — no live Gemini/Antigravity yet. Port 8080 is open (un-TLS'd — front with TLS before broad exposure).
 
 **Definition of "ready" — two tiers:**
 - **Runnable (stub mode):** Phases 1–2. Real backbone deploys; boots with zero env vars; iOS client can connect. Demos the UI/flow with canned model output.
@@ -27,7 +28,7 @@ this file (sequencing). If they disagree, the spec wins; fix this file.
 
 ## Phases
 
-### Phase 1 — FastAPI serving surface (stub mode)  ·  task #6  ·  HANDOFF §2.A
+### Phase 1 — FastAPI serving surface (stub mode)  ·  task #6  ·  HANDOFF §2.A  ·  ✅ DONE (063ea72)
 *"Start here; it makes the whole thing runnable."* Boots clean with zero env vars (`07 §2.4`).
 - [x] `orchestrator/config.py` — service settings + integration-mode detection
 - [ ] `orchestrator/chat_bus/ws.py` — `WebSocketTransport` satisfying the `Transport` protocol (sync `send` → `asyncio.Queue` → ws writer task)
@@ -41,7 +42,7 @@ this file (sequencing). If they disagree, the spec wins; fix this file.
   - per-session registry (engine+state) shared by `/v2/chat` and `/v2/snapshot`
 - [ ] **Verify:** full pytest stays **127 green**; FastAPI `TestClient` smoke (`/healthz`, snapshot `202`, chat `Hello`→replay handshake).
 
-### Phase 2 — Containerize the real orchestrator + repoint CI  ·  task #7
+### Phase 2 — Containerize the real orchestrator + repoint CI  ·  task #7  ·  ✅ DONE (90ccc72)
 Make `orchestrator/` (repo root, package `forge-orchestrator`) deploy through the existing pipeline.
 - [ ] Add `fastapi`, `uvicorn[standard]`, `websockets` to `pyproject.toml` deps; `google-genai` as optional `[live]` extra
 - [ ] **Root `Dockerfile`** (context = repo root): COPY `pyproject.toml` + `orchestrator/` + `bench_knowledge/`; `pip install .`; HEALTHCHECK `/healthz`; CMD `uvicorn orchestrator.main:app --host 0.0.0.0 --port 8080`; non-root user
