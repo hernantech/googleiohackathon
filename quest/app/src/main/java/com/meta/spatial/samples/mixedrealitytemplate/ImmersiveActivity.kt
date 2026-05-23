@@ -5,8 +5,15 @@ import android.os.Bundle
 import android.view.View
 import android.webkit.WebView
 import android.widget.TextView
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.ui.platform.ComposeView
 import androidx.core.net.toUri
+import com.meta.spatial.samples.mixedrealitytemplate.forge.net.OrchestratorSocket
+import com.meta.spatial.samples.mixedrealitytemplate.forge.state.SessionState
+import com.meta.spatial.samples.mixedrealitytemplate.forge.ui.ChatPanel
+import com.meta.spatial.samples.mixedrealitytemplate.forge.ui.ConfirmationPanel
+import com.meta.spatial.samples.mixedrealitytemplate.forge.ui.HudPanel
 import com.meta.spatial.castinputforward.CastInputForwardFeature
 import com.meta.spatial.compose.ComposeFeature
 import com.meta.spatial.compose.ComposeViewPanelRegistration
@@ -46,6 +53,10 @@ class ImmersiveActivity : AppSystemActivity() {
   lateinit var textView: TextView
   lateinit var webView: WebView
 
+  // Forge orchestrator session. Initialized in onCreate (before onSceneReady
+  // creates the panels that reference it).
+  private lateinit var session: SessionState
+
   override fun registerFeatures(): List<SpatialFeature> {
     val features =
         mutableListOf<SpatialFeature>(
@@ -73,6 +84,12 @@ class ImmersiveActivity : AppSystemActivity() {
     systemManager.findSystem<LocomotionSystem>().enableLocomotion(false)
     scene.enablePassthrough(true)
 
+    // Forge: connect to the orchestrator chat bus and project events into UI.
+    val socket =
+        OrchestratorSocket(baseUrl = BuildConfig.ORCHESTRATOR_URL, scope = activityScope)
+    session = SessionState(socket, activityScope)
+    session.start()
+
     loadGLXF()
   }
 
@@ -94,8 +111,20 @@ class ImmersiveActivity : AppSystemActivity() {
 
     scene.setViewOrigin(0.0f, 0.0f, 2.0f, 180.0f)
 
-    android.util.Log.i("MRT", "onSceneReady done — panel comes from Composition.glxf")
+    // Forge panels. The wearer is at (0,0,2) facing -Z, so content at z<2 is in
+    // front; the 180°-about-Y rotation (matching Composition.glxf's panel) turns
+    // each quad's face toward the wearer. Offset +X (the wearer's right) so the
+    // baseline ui_example panel stays visible as a regression anchor for now.
+    val faceUser = Quaternion(0f, 0f, 1f, 0f) // 180° about Y, (w,x,y,z)
+    spawnForgePanel(R.id.panel_forge_hud, Vector3(1.0f, 1.78f, 1.0f), faceUser)
+    spawnForgePanel(R.id.panel_forge_chat, Vector3(1.0f, 1.35f, 1.0f), faceUser)
+    spawnForgePanel(R.id.panel_forge_confirmation, Vector3(1.0f, 0.82f, 1.0f), faceUser)
+
+    android.util.Log.i("MRT", "onSceneReady done — Forge panels mounted + GLXF panel")
   }
+
+  private fun spawnForgePanel(panelId: Int, position: Vector3, rotation: Quaternion): Entity =
+      Entity.createPanelEntity(panelId, Transform(Pose(position, rotation)))
 
   fun playVideo(webviewURI: String) {
     textView.visibility = View.GONE
@@ -139,10 +168,41 @@ class ImmersiveActivity : AppSystemActivity() {
               )
             },
         ),
+        // Forge MR panels (Compose) — chat console, HUD, confirmation.
+        forgeComposePanel(R.id.panel_forge_hud, 0.62f, 0.20f) { HudPanel(session) },
+        forgeComposePanel(R.id.panel_forge_chat, 0.90f, 0.62f) { ChatPanel(session) },
+        forgeComposePanel(R.id.panel_forge_confirmation, 0.55f, 0.42f) {
+          ConfirmationPanel(session)
+        },
     )
   }
 
+  /** A Compose panel sized in meters, wrapped in a dark Material theme. */
+  @OptIn(SpatialSDKExperimentalAPI::class)
+  private fun forgeComposePanel(
+      panelId: Int,
+      widthM: Float,
+      heightM: Float,
+      content: @androidx.compose.runtime.Composable () -> Unit,
+  ): PanelRegistration =
+      ComposeViewPanelRegistration(
+          panelId,
+          composeViewCreator = { _, context ->
+            ComposeView(context).apply {
+              setContent { MaterialTheme(colorScheme = darkColorScheme()) { content() } }
+            }
+          },
+          settingsCreator = {
+            UIPanelSettings(
+                shape = QuadShapeOptions(width = widthM, height = heightM),
+                style = PanelStyleOptions(themeResourceId = R.style.PanelAppThemeTransparent),
+                display = DpPerMeterDisplayOptions(),
+            )
+          },
+      )
+
   override fun onSpatialShutdown() {
+    if (::session.isInitialized) session.stop()
     super.onSpatialShutdown()
   }
 

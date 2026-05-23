@@ -49,7 +49,11 @@
   <uses-permission android:name="com.oculus.permission.RENDER_MODEL" />
   <!-- Volume Control -->
   <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
-  <application android:allowBackup="false" android:label="MixedRealityTemplate">
+  <application
+    android:allowBackup="false"
+    android:label="MixedRealityTemplate"
+    android:networkSecurityConfig="@xml/network_security_config"
+  >
     <meta-data
       android:name="com.oculus.supportedDevices"
       android:value="quest2|questpro|quest3"
