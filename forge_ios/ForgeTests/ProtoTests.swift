@@ -80,7 +80,9 @@ final class ProtoTests: XCTestCase {
         let card = ActionCard.from(json: json)
         XCTAssertEqual(card?.title, "Set PSU")
         XCTAssertEqual(card?.risk, .high)
-        XCTAssertEqual(card?.affirmLabel, "Approve")   // default
+        // v2 defaults per specs/00 §2.1 (WP-7): "I did it" / "Skip"
+        XCTAssertEqual(card?.affirmLabel, "I did it")
+        XCTAssertEqual(card?.denyLabel, "Skip")
         XCTAssertNil(ActionCard.from(json: nil))
     }
 
