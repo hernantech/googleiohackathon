@@ -1,0 +1,12 @@
+# Device-simulator client deps — NOT orchestrator package deps.
+# Install into the SAME venv (or a separate one):
+#   .venv/bin/pip install -r clients/requirements.txt
+#
+# These pull in native audio/video stacks (PortAudio via sounddevice, the
+# OpenCV runtime), which the orchestrator must never depend on — the server is
+# device-blind and transcode-free. Hence a standalone requirements file.
+
+websockets>=13      # WS client to /v2/live (already an orchestrator dep, pinned here too)
+opencv-python>=4.9  # webcam capture + JPEG encode
+sounddevice>=0.4    # mic capture (16 kHz PCM in) + speaker playback (24 kHz out)
+numpy>=1.26         # audio buffers (sounddevice gives/takes numpy frames)

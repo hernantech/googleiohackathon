@@ -28,8 +28,23 @@ pytestmark = pytest.mark.live
 _HAS_KEY = bool(os.getenv("GEMINI_API_KEY"))
 
 
+def _live_marker_selected(request) -> bool:
+    """True only if the run explicitly selected the ``live`` marker (``-m live``).
+
+    An unfiltered ``pytest`` run does NOT pass ``-m``; a CI run filters it out
+    with ``-m 'not live'``. Either way this returns False so we skip in-body and
+    never hit the network even when GEMINI_API_KEY happens to be set in the env
+    (review LOW nit — skipif alone isn't enough for an unfiltered keyed run)."""
+    expr = request.config.getoption("-m") or ""
+    # Require "live" to appear as a *selecting* term, not negated.
+    return "live" in expr and "not live" not in expr
+
+
 @pytest.mark.skipif(not _HAS_KEY, reason="@live: set GEMINI_API_KEY to run")
-def test_real_live_session_returns_audio_and_transcript():
+def test_real_live_session_returns_audio_and_transcript(request):
+    if not _live_marker_selected(request):
+        pytest.skip("@live: pass -m live to opt in (no network on a default run)")
+
     from orchestrator.live.session import connect, live_model
 
     async def run():

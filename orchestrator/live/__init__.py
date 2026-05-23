@@ -1,8 +1,11 @@
 """Gemini Live bridge (P4 always-on path) — 00 §4.1.
 
-The bridge forwards the device's H.264 + audio to the Live session **without
-decoding or re-encoding** (the device emits the codec; the server never
-transcodes). This is the only persistent media socket.
+The bridge forwards the device's media to the Live session **without decoding or
+re-encoding** (the orchestrator never transcodes). For the Live path the media
+contract is **PCM audio (16 kHz mono) + JPEG frames** — Gemini Live does NOT
+accept H.264 — so each chunk is *labelled* (a :class:`MediaKind`) and routed to
+the correct realtime-input slot; the bytes themselves are relayed verbatim. This
+is the only persistent media socket.
 
 Phase 3 adds ``LiveDuplexBridge``: the OUT direction streams TTS audio back to
 the client and routes final transcripts + tool-calls into the graph. The real
@@ -18,6 +21,7 @@ from orchestrator.live.bridge import (  # noqa: F401
     LivePassthrough,
     LiveSession,
     LiveSink,
+    MediaKind,
     OnToolCall,
     OnTranscript,
 )

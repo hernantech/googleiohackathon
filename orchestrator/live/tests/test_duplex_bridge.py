@@ -21,7 +21,7 @@ from orchestrator.chat_bus.bus import ChatBus, Session
 from orchestrator.graph.engine import GraphEngine
 from orchestrator.graph.state import ForgeState
 from orchestrator.knowledge import KnowledgeAdapter
-from orchestrator.live.bridge import LiveDuplexBridge, LiveEvent
+from orchestrator.live.bridge import LiveDuplexBridge, LiveEvent, MediaKind
 from orchestrator.seams import build_graph_deps
 
 
@@ -32,12 +32,15 @@ class FakeLiveSession:
     def __init__(self, scripted: list[LiveEvent]):
         self._scripted = scripted
         self.received_media: list[bytes] = []
+        #: (kind, chunk) pairs so tests can assert routing of audio vs JPEG.
+        self.received_by_kind: list[tuple[MediaKind, bytes]] = []
         self.injected_responses: list[tuple[str, dict]] = []
         self.sent_text: list[str] = []
         self.closed = False
 
-    async def send_media(self, chunk: bytes) -> None:
+    async def send_media(self, chunk: bytes, kind: MediaKind = MediaKind.AUDIO) -> None:
         self.received_media.append(chunk)
+        self.received_by_kind.append((kind, chunk))
 
     async def receive(self):
         for ev in self._scripted:
@@ -184,6 +187,92 @@ def test_tool_call_routed_and_function_response_injected():
         assert "headline" in payload
 
     asyncio.run(run())
+
+
+# ── IN routing: PCM → audio slot, JPEG → image slot (review MEDIUM #2) ────────
+def test_audio_and_video_chunks_route_by_kind():
+    async def run():
+        session = FakeLiveSession(scripted=[])
+        client = FakeClientTransport()
+        bridge = LiveDuplexBridge(session, audio_out=client.send_bytes)
+
+        pcm = b"pcm-16khz-mono-bytes"
+        jpeg = b"\xff\xd8\xff\xe0jpeg-frame\xff\xd9"
+        bridge.forward_client_chunk(pcm, MediaKind.AUDIO)
+        bridge.forward_client_chunk(jpeg, MediaKind.VIDEO)
+        bridge.forward_client_chunk(b"more-pcm", MediaKind.AUDIO)
+        await asyncio.sleep(0)  # let the fire-and-forget send tasks run
+
+        # Each chunk reached the session tagged with its kind, byte-for-byte.
+        assert session.received_by_kind == [
+            (MediaKind.AUDIO, pcm),
+            (MediaKind.VIDEO, jpeg),
+            (MediaKind.AUDIO, b"more-pcm"),
+        ]
+        assert bridge.audio_chunks_in == 2
+        assert bridge.video_frames_in == 1
+        assert bridge.media_sockets == 1  # still one persistent socket
+
+    asyncio.run(run())
+
+
+# ── session adapter: kind selects the google-genai realtime-input slot ────────
+def test_genai_session_send_media_selects_audio_vs_video_slot():
+    """The real adapter maps AUDIO → send_realtime_input(audio=Blob(audio/pcm))
+    and VIDEO → send_realtime_input(video=Blob(image/jpeg)). Uses a fake genai
+    session (still no network) to capture the kwargs the adapter emits."""
+
+    async def run():
+        from orchestrator.live.session import (
+            AUDIO_MIME,
+            VIDEO_MIME,
+            GenaiLiveSession,
+        )
+
+        class FakeGenaiSession:
+            def __init__(self):
+                self.calls: list[dict] = []
+
+            async def send_realtime_input(self, **kwargs):
+                self.calls.append(kwargs)
+
+        fake = FakeGenaiSession()
+        adapter = GenaiLiveSession(fake)
+
+        await adapter.send_media(b"pcm-bytes", MediaKind.AUDIO)
+        await adapter.send_media(b"\xff\xd8jpeg", MediaKind.VIDEO)
+
+        assert len(fake.calls) == 2
+        # call 0: audio slot only, correct mime + verbatim bytes
+        assert set(fake.calls[0]) == {"audio"}
+        assert fake.calls[0]["audio"].mime_type == AUDIO_MIME
+        assert fake.calls[0]["audio"].data == b"pcm-bytes"
+        # call 1: video slot only, image/jpeg + verbatim bytes (NOT audio)
+        assert set(fake.calls[1]) == {"video"}
+        assert fake.calls[1]["video"].mime_type == VIDEO_MIME
+        assert fake.calls[1]["video"].data == b"\xff\xd8jpeg"
+
+    asyncio.run(run())
+
+
+# ── /v2/live framing: 1-byte prefix parse routes audio vs video ───────────────
+def test_live_frame_prefix_parsing():
+    from orchestrator.main import _parse_live_frame
+
+    # 0x01 → audio, payload is everything after the prefix, byte-for-byte.
+    payload, kind = _parse_live_frame(b"\x01" + b"pcm-payload")
+    assert kind == MediaKind.AUDIO and payload == b"pcm-payload"
+
+    # 0x02 → video (JPEG)
+    payload, kind = _parse_live_frame(b"\x02" + b"\xff\xd8jpeg")
+    assert kind == MediaKind.VIDEO and payload == b"\xff\xd8jpeg"
+
+    # empty frame and unknown prefix are dropped (None), never mislabeled.
+    assert _parse_live_frame(b"") is None
+    assert _parse_live_frame(b"\x09garbage") is None
+    # a prefix with no payload is a valid (empty) chunk, not None.
+    payload, kind = _parse_live_frame(b"\x01")
+    assert kind == MediaKind.AUDIO and payload == b""
 
 
 # ── never fail-stop: a hook that raises does not kill the loop ────────────────

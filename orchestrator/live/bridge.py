@@ -1,10 +1,22 @@
-"""Live bridges — always-on H.264 + audio ↔ Gemini Live (00 §4.1).
+"""Live bridges — always-on PCM audio + JPEG video ↔ Gemini Live (00 §4.1).
 
 Two layers, both dependency-injected so they are testable with no network:
 
 - ``LivePassthrough`` — the one-direction relay primitive (kept from P4): client
   bytes → injected ``LiveSink`` → Gemini Live, **byte-for-byte, no transcode**
   (08 §3.5a). Exactly one persistent media socket; single-lifecycle reconnect.
+
+Media contract for the Live path (supersedes the spec's H.264 passthrough for
+THIS path): Gemini Live does NOT accept H.264. It takes **PCM audio (16 kHz
+mono)** + **JPEG image frames**. So the device emits PCM + JPEG and the bridge
+routes each chunk to Live by its declared :class:`MediaKind` — audio as a
+realtime ``audio=Blob(mime audio/pcm;rate=16000)`` and a frame as a realtime
+``video=Blob(mime image/jpeg)`` (google-genai 2.6.0
+``session.send_realtime_input``). Bytes are still relayed verbatim — the
+orchestrator never decodes/re-encodes; it only *labels* the chunk so Live gets
+the right realtime-input slot. The labelling itself is carried over /v2/live by
+a 1-byte type prefix on each binary frame (see ``main.py`` + the device-sim
+client) — ``0x01`` = PCM audio, ``0x02`` = JPEG frame.
 
 - ``LiveDuplexBridge`` — the full duplex session wiring (Phase 3, HANDOFF §2.D,
   ARCHITECTURE §2/§4). It owns an injected ``LiveSession`` (the real
@@ -30,13 +42,34 @@ else in the orchestrator (orchestrator/seams.py).
 from __future__ import annotations
 
 import asyncio
+import enum
 import logging
 from typing import Awaitable, Callable, Protocol
 
 log = logging.getLogger("forge.live.bridge")
 
-#: A sink that accepts one media chunk and ships it to the Gemini Live session.
-LiveSink = Callable[[bytes], None]
+
+class MediaKind(enum.IntEnum):
+    """How one client media chunk should be routed into Gemini Live.
+
+    The integer values double as the 1-byte type prefix used on the /v2/live
+    WebSocket framing (see ``main.py`` + ``clients/live_device_sim.py``):
+
+      * ``AUDIO`` (``0x01``) — PCM, 16 kHz mono → Live realtime ``audio=`` input.
+      * ``VIDEO`` (``0x02``) — a JPEG frame → Live realtime ``video=`` input
+        (``mime_type='image/jpeg'``).
+
+    Gemini Live takes PCM + JPEG (NOT H.264), so the bridge must route by kind,
+    not send everything as audio.
+    """
+
+    AUDIO = 0x01
+    VIDEO = 0x02
+
+
+#: A sink that accepts one media chunk + its kind and ships it to the Gemini
+#: Live session (audio → realtime audio input, video → realtime image input).
+LiveSink = Callable[[bytes, MediaKind], None]
 
 #: Ship one TTS audio chunk back to the connected client (binary WS frame).
 AudioOut = Callable[[bytes], Awaitable[None]]
@@ -51,7 +84,11 @@ OnToolCall = Callable[[str, dict, str], Awaitable[dict | None]]
 
 
 class LivePassthrough:
-    """One persistent media path: client → (this) → Gemini Live. Pass-through."""
+    """One persistent media path: client → (this) → Gemini Live. Pass-through.
+
+    A chunk carries its :class:`MediaKind` so the sink can route audio vs. a
+    JPEG frame to the correct Live realtime-input slot. The bytes themselves are
+    never touched — no codec is instantiated (08 §3.5a)."""
 
     def __init__(self, live_sink: LiveSink):
         self._sink = live_sink
@@ -59,9 +96,9 @@ class LivePassthrough:
         self.media_sockets = 1
         self.bytes_forwarded = 0
 
-    def forward(self, chunk: bytes) -> None:
+    def forward(self, chunk: bytes, kind: MediaKind = MediaKind.AUDIO) -> None:
         """Relay a media chunk verbatim. No codec is instantiated."""
-        self._sink(chunk)
+        self._sink(chunk, kind)
         self.bytes_forwarded += len(chunk)
 
     def reconnect(self, live_sink: LiveSink) -> None:
@@ -83,8 +120,11 @@ class LiveSession(Protocol):
     real adapter is a thin pass-through.
     """
 
-    async def send_media(self, chunk: bytes) -> None:
-        """Relay one client media chunk into the session (no transcode)."""
+    async def send_media(self, chunk: bytes, kind: MediaKind = MediaKind.AUDIO) -> None:
+        """Relay one client media chunk into the session (no transcode).
+
+        ``kind`` selects the Live realtime-input slot: ``AUDIO`` → PCM audio,
+        ``VIDEO`` → a JPEG image frame."""
         ...
 
     def receive(self):  # -> AsyncIterator[LiveEvent]
@@ -170,20 +210,32 @@ class LiveDuplexBridge:
         # accumulates partial output-transcription deltas until turn_complete
         self._pending_out_transcript: list[str] = []
         self.audio_chunks_out = 0
+        self.audio_chunks_in = 0
+        self.video_frames_in = 0
         self.transcripts_routed = 0
         self.tool_calls_routed = 0
         self.turns_completed = 0
 
     # ── IN: client → session ────────────────────────────────────────────────
-    def _enqueue_media(self, chunk: bytes) -> None:
-        """LiveSink: schedule the chunk onto the session (no transcode)."""
-        task = asyncio.ensure_future(self._session.send_media(chunk))
+    def _enqueue_media(self, chunk: bytes, kind: MediaKind) -> None:
+        """LiveSink: schedule the chunk onto the session (no transcode),
+        carrying its kind so the session routes audio vs. JPEG correctly."""
+        task = asyncio.ensure_future(self._session.send_media(chunk, kind))
         self._send_tasks.add(task)
         task.add_done_callback(self._send_tasks.discard)
 
-    def forward_client_chunk(self, chunk: bytes) -> None:
-        """Relay one client media chunk verbatim into the Live session."""
-        self._passthrough.forward(chunk)
+    def forward_client_chunk(
+        self, chunk: bytes, kind: MediaKind = MediaKind.AUDIO
+    ) -> None:
+        """Relay one client media chunk verbatim into the Live session.
+
+        ``kind`` (parsed from the /v2/live 1-byte frame prefix) routes the chunk
+        to Live as PCM audio (``AUDIO``) or a JPEG image frame (``VIDEO``)."""
+        self._passthrough.forward(chunk, kind)
+        if kind == MediaKind.AUDIO:
+            self.audio_chunks_in += 1
+        elif kind == MediaKind.VIDEO:
+            self.video_frames_in += 1
 
     @property
     def bytes_forwarded(self) -> int:

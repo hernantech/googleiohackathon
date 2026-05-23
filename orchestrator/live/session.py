@@ -12,6 +12,11 @@ Verified working model (2026-05-23): ``gemini-3.1-flash-live-preview`` with
 ``connect`` returned 24 kHz PCM TTS audio and a final output transcript for a
 short text turn. (The 3.x Live model rejects a TEXT-only modality with a 1011;
 AUDIO out is what /v2/live wants anyway.) Configurable via ``GEMINI_LIVE_MODEL``.
+
+Media into Live is **PCM audio + JPEG frames** (NOT H.264): ``send_media``
+routes by :class:`~orchestrator.live.bridge.MediaKind` to the right
+``send_realtime_input`` slot (``audio=`` vs ``video=``). Bytes pass through
+verbatim — the orchestrator never transcodes.
 """
 
 from __future__ import annotations
@@ -20,9 +25,14 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
-from orchestrator.live.bridge import LiveEvent
+from orchestrator.live.bridge import LiveEvent, MediaKind
 
 log = logging.getLogger("forge.live.session")
+
+#: Live audio contract: raw little-endian PCM, 16 kHz mono (00 §4.1).
+AUDIO_MIME = "audio/pcm;rate=16000"
+#: Live video contract: JPEG frames (Gemini Live takes images, NOT H.264).
+VIDEO_MIME = "image/jpeg"
 
 #: Default Live model. Verified live on the demo key 2026-05-23 (see module doc).
 DEFAULT_LIVE_MODEL = "gemini-3.1-flash-live-preview"
@@ -35,7 +45,8 @@ def live_model() -> str:
 def _live_config():
     """LiveConnectConfig for the always-on path: AUDIO out (TTS back to the
     client) + input/output transcription so final transcripts route to the
-    graph. No transcode is configured — the device emits the codec (00 §4.1)."""
+    graph. No transcode is configured — the device emits PCM + JPEG and we relay
+    the bytes verbatim into the right realtime-input slot (00 §4.1)."""
     from google.genai import types  # optional [live] dep
 
     return types.LiveConnectConfig(
@@ -56,18 +67,29 @@ class GenaiLiveSession:
         self._s = session
 
     # ── IN: client media → Live (no transcode) ──────────────────────────────
-    async def send_media(self, chunk: bytes) -> None:
-        """Relay one client media chunk into the session verbatim.
+    async def send_media(self, chunk: bytes, kind: MediaKind = MediaKind.AUDIO) -> None:
+        """Relay one client media chunk into the session verbatim, routed by kind.
 
-        The device sends interleaved H.264 + PCM in Gemini Live framing; we send
-        it as realtime audio input (the model handles the codec — 08 §3.5a). We
-        do NOT decode/re-encode.
+        Gemini Live takes **PCM audio (16 kHz mono)** and **JPEG image frames**
+        (NOT H.264), via distinct realtime-input slots (google-genai 2.6.0
+        ``send_realtime_input(audio=...)`` vs ``send_realtime_input(video=...)``,
+        verified). We pick the slot by :class:`MediaKind` and pass the bytes
+        through unchanged — we do NOT decode/re-encode (08 §3.5a).
+
+        Earlier this hard-coded ``audio/pcm`` for *every* chunk, which mislabeled
+        JPEG frames as audio (review MEDIUM #2); now audio → ``audio=`` and a
+        frame → ``video=`` with ``image/jpeg``.
         """
         from google.genai import types  # optional [live] dep
 
-        await self._s.send_realtime_input(
-            audio=types.Blob(data=chunk, mime_type="audio/pcm;rate=16000")
-        )
+        if kind == MediaKind.VIDEO:
+            await self._s.send_realtime_input(
+                video=types.Blob(data=chunk, mime_type=VIDEO_MIME)
+            )
+        else:
+            await self._s.send_realtime_input(
+                audio=types.Blob(data=chunk, mime_type=AUDIO_MIME)
+            )
 
     # ── OUT: Live → normalized events ────────────────────────────────────────
     async def receive(self):
