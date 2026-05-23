@@ -1,0 +1,11 @@
+# Xcode build output / derived data
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# Local, environment-specific config (orchestrator URL, auth token overrides)
+Forge.xcconfig
+
+# macOS
+.DS_Store
