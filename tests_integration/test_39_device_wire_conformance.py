@@ -166,23 +166,28 @@ def test_39_device_snapshot_phone_and_quest_same_path():
 
 
 def test_39_device_live_phone_and_quest_same_path():
-    """§3.9: /v2/live accepts byte streams from both phone and quest (device-blind).
+    """§3.9: /v2/live accepts media from both phone and quest (device-blind).
 
-    We feed raw bytes to /v2/live for both client types and assert no error.
-    The stub live_sink is a no-op; this just proves the path doesn't branch on
-    client type.
+    We feed prefixed PCM-audio AND JPEG-video frames (the Live-path contract;
+    1-byte type prefix per binary frame — 0x01 audio, 0x02 JPEG) to /v2/live for
+    both client types and assert no error. The stub live_sink is a no-op; this
+    just proves the path doesn't branch on client type and routes both kinds.
     """
     from fastapi.testclient import TestClient
+    from orchestrator.live.bridge import MediaKind
     from orchestrator.main import app
 
     client = TestClient(app)
-    synthetic_h264 = bytes(range(256)) * 4  # synthetic H.264-like chunk
+    pcm = bytes(range(256)) * 4  # synthetic PCM-like chunk
+    jpeg = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9"
 
     for client_type in ("phone", "quest"):
         session_id = f"s39-live-{client_type}"
         with client.websocket_connect(f"/v2/live?sessionId={session_id}") as ws:
-            ws.send_bytes(synthetic_h264)
-            # No error means the server accepted the bytes without a client branch
+            ws.send_bytes(bytes([MediaKind.AUDIO]) + pcm)
+            ws.send_bytes(bytes([MediaKind.VIDEO]) + jpeg)
+            # No error means the server accepted + routed both kinds without a
+            # client-typed branch.
 
 
 def test_39_device_chat_hello_phone_and_quest():

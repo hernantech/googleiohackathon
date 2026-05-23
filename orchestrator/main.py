@@ -4,7 +4,7 @@ Wraps the tested, transport-agnostic backbone in the v2 endpoints:
 
   GET  /healthz                          liveness + integration modes
   WSS  /v2/chat?sessionId=&client=       chat bus over a WebSocket (spec 04)
-  WSS  /v2/live?sessionId=               H.264+PCM passthrough → Gemini Live
+  WSS  /v2/live?sessionId=               PCM audio + JPEG frames → Gemini Live
   POST /v2/snapshot?sessionId=&note=     hi-res JPEG → analysis card (00 §4.2)
 
 Boots clean with zero env vars (07 §2.4): the model seams are stubs
@@ -192,16 +192,129 @@ async def chat(ws: WebSocket) -> None:
 
 
 # ── /v2/live ─────────────────────────────────────────────────────────────--
-def _stub_live_sink(chunk: bytes) -> None:
-    """No-op Gemini Live sink (Phase 3 wires a real google-genai Live session)."""
+#
+# WS framing (binary frames, client → orchestrator): each binary frame is a
+# single media chunk prefixed with ONE type byte, the rest is the raw payload
+# relayed verbatim (no transcode):
+#
+#     byte 0   payload[1:]
+#     ──────   ─────────────────────────────────────────────
+#     0x01     PCM audio, 16 kHz mono little-endian  → Live audio= slot
+#     0x02     a JPEG frame (image/jpeg)             → Live video= slot
+#
+# Gemini Live takes PCM + JPEG (NOT H.264). The orchestrator only reads the
+# prefix to pick the realtime-input slot; the payload bytes are forwarded
+# unchanged. A frame with an unknown/zero-length prefix is dropped. TTS audio
+# (24 kHz PCM) comes BACK as bare binary frames (no prefix) over the same WS.
+# See orchestrator/live/bridge.py MediaKind + clients/live_device_sim.py.
+from orchestrator.live.bridge import MediaKind as _MediaKind
+
+_KIND_BY_PREFIX = {int(k): k for k in _MediaKind}
+
+
+def _parse_live_frame(data: bytes) -> tuple[bytes, "_MediaKind"] | None:
+    """Split a /v2/live binary frame into (payload, kind) per the 1-byte prefix.
+
+    Returns ``None`` for an empty frame or an unknown type byte (the caller
+    drops it rather than mislabeling it)."""
+    if not data:
+        return None
+    kind = _KIND_BY_PREFIX.get(data[0])
+    if kind is None:
+        return None
+    return data[1:], kind
+
+
+def _stub_live_sink(chunk: bytes, kind: "_MediaKind" = _MediaKind.AUDIO) -> None:
+    """No-op Gemini Live sink (used when no GEMINI_API_KEY / no [live] extra,
+    or when opening a real Live session fails).
+
+    Keeps /v2/live serving with zero env vars (07 §2.4): the WS still accepts and
+    drains client media (audio AND video frames); nothing is sent back. The real
+    duplex path is wired by `_make_live_graph_hooks` + `LiveDuplexBridge` below
+    when a Live session opens.
+    """
     return None
+
+
+def _make_live_graph_hooks(session_id: str):
+    """Build the (on_transcript, on_tool_call) graph hooks for one Live session.
+
+    Both route into the SAME per-session ctx as /v2/chat and /v2/snapshot
+    (get_ctx) and drain the graph's outbound events to the chat bus so SME
+    deliberation shows up on /v2/chat. The synchronous GraphEngine runs in a
+    worker thread so the Live receive loop never blocks the event loop.
+    """
+    ctx = get_ctx(session_id)
+
+    async def on_transcript(transcript: str) -> str | None:
+        # ARCHITECTURE §2/§4: a final Live transcript drives the main pipeline.
+        result = await asyncio.to_thread(ctx.engine.run, ctx.state, transcript)
+        _drain_to_bus(ctx.state)
+        # Voice the LiveSpeaker line back through Live (the spoken summary).
+        return ctx.state.liveSpeakerScript if result.status != "paused" else None
+
+    async def on_tool_call(name: str, args: dict, call_id: str) -> dict | None:
+        # A Live function-call (e.g. summon_guild) drives the guild deliberation;
+        # the structured result is injected back as a function-response (00 §3).
+        transcript = str(args.get("topic") or args.get("text") or name)
+
+        def _run() -> dict:
+            ctx.engine.run(ctx.state, transcript)
+            merged = ctx.state.mergedOpinion
+            return {
+                "tool": name,
+                "headline": merged.headline if merged else "",
+                "supportingSmes": list(merged.supportingSmes) if merged else [],
+            }
+
+        payload = await asyncio.to_thread(_run)
+        _drain_to_bus(ctx.state)
+        return payload
+
+    return on_transcript, on_tool_call
+
+
+async def _drain_stub_loop(ws: WebSocket) -> None:
+    """No-op one-way fallback: accept-but-DRAIN /v2/live (not silently dead).
+
+    Used with zero env vars OR when opening a real Live session fails (bad
+    model/key/network, or google-genai absent while keyed) — review MEDIUM #1.
+    The WS still accepts and drains client media (audio AND JPEG video frames,
+    routed per the 1-byte prefix into a no-op sink); nothing is sent back.
+    """
+    from orchestrator.live.bridge import LivePassthrough
+
+    bridge = LivePassthrough(live_sink=_stub_live_sink)
+    try:
+        while True:
+            msg = await ws.receive()
+            if msg.get("type") == "websocket.disconnect":
+                break
+            data = msg.get("bytes")
+            if data is None:
+                continue
+            parsed = _parse_live_frame(data)
+            if parsed is None:
+                continue  # empty/unknown-prefix frame — drop, never mislabel
+            payload, kind = parsed
+            bridge.forward(payload, kind)
+    except WebSocketDisconnect:
+        pass
+    except RuntimeError:
+        # The WS is already closed (e.g. we fell back here after a mid-session
+        # error). Nothing to drain — exit quietly.
+        pass
+    finally:
+        bridge.close()
 
 
 @app.websocket("/v2/live")
 async def live(ws: WebSocket) -> None:
-    from orchestrator.live.bridge import LivePassthrough
+    from orchestrator.live.bridge import LiveDuplexBridge
 
-    if not ws.query_params.get("sessionId"):
+    session_id = ws.query_params.get("sessionId")
+    if not session_id:
         await ws.close(code=1008)
         return
     ok, subprotocol = _auth_subprotocol(ws)
@@ -210,19 +323,71 @@ async def live(ws: WebSocket) -> None:
         return
     await ws.accept(subprotocol=subprotocol)
 
-    bridge = LivePassthrough(live_sink=_stub_live_sink)
+    # Decide whether to *attempt* a real duplex Gemini Live session (gated behind
+    # GEMINI_API_KEY + the [live] extra). The actual connect happens inside the
+    # `async with` below; ANY failure there falls back to the drain loop so the
+    # socket stays accept-but-drain rather than accept-but-silently-dead.
+    live_cm = None
+    if settings.gemini_api_key:
+        try:
+            from orchestrator.live.session import connect as _live_connect
+
+            live_cm = _live_connect(settings.gemini_live_model)
+        except Exception as e:  # noqa: BLE001 — google-genai missing / import error
+            log.warning("live session unavailable (%s); using no-op stub", e)
+            live_cm = None
+
+    if live_cm is None:
+        # ── stub mode: one-way relay into a no-op sink ──────────────────────
+        await _drain_stub_loop(ws)
+        return
+
+    # ── duplex mode: real Gemini Live session both directions ───────────────
+    async def audio_out(chunk: bytes) -> None:
+        await ws.send_bytes(chunk)
+
+    on_transcript, on_tool_call = _make_live_graph_hooks(session_id)
+    bridge: LiveDuplexBridge | None = None
     try:
-        while True:
-            msg = await ws.receive()
-            if msg.get("type") == "websocket.disconnect":
-                break
-            chunk = msg.get("bytes")
-            if chunk is not None:
-                bridge.forward(chunk)
-    except WebSocketDisconnect:
-        pass
-    finally:
-        bridge.close()
+        async with live_cm as session:
+            bridge = LiveDuplexBridge(
+                session,
+                audio_out=audio_out,
+                on_transcript=on_transcript,
+                on_tool_call=on_tool_call,
+            )
+            recv = asyncio.create_task(bridge.receive_loop())
+            try:
+                while True:
+                    msg = await ws.receive()
+                    if msg.get("type") == "websocket.disconnect":
+                        break
+                    data = msg.get("bytes")
+                    if data is None:
+                        continue
+                    parsed = _parse_live_frame(data)
+                    if parsed is None:
+                        continue  # empty/unknown-prefix frame — drop
+                    payload, kind = parsed
+                    bridge.forward_client_chunk(payload, kind)
+            except WebSocketDisconnect:
+                pass
+            finally:
+                recv.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await recv
+                # aclose() runs here for the normal path AND the receive-error
+                # path (try/finally), so the session is always torn down once.
+                await bridge.aclose()
+                bridge = None  # already closed; don't double-close below
+    except Exception as e:  # noqa: BLE001 — live session died; don't 500 the WS
+        # Connect/session failure BEFORE the WS loop ran → fall back to the
+        # drain loop so the client isn't talking to a dead socket (MEDIUM #1).
+        log.warning("live duplex session error (%s)", e)
+        if bridge is not None:
+            with contextlib.suppress(Exception):
+                await bridge.aclose()
+        await _drain_stub_loop(ws)
 
 
 # ── /v2/snapshot ─────────────────────────────────────────────────────────--

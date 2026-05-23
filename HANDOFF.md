@@ -35,7 +35,7 @@ Stand up the routes from `specs/04 §1`, `00 §1`, `07`:
 |---|---|---|---|
 | `GET` | `/healthz` | — | `{"ok": true}` |
 | `WSS` | `/v2/chat?sessionId=&client=` | `AgentEvent` JSON (`00 §2`) | a `chat_bus.Session` over the WS (see `Transport` protocol in `chat_bus/bus.py`) |
-| `WSS` | `/v2/live?sessionId=` | H.264 video + PCM audio (Gemini Live framing) | `live.LivePassthrough` → real Gemini Live session |
+| `WSS` | `/v2/live?sessionId=` | PCM audio (16 kHz) + JPEG frames, 1-byte type prefix per binary frame (`0x01`=audio, `0x02`=JPEG) — Gemini Live takes PCM + JPEG, NOT H.264 | `live.LiveDuplexBridge` (routes by `MediaKind`) → real Gemini Live session |
 | `POST` | `/v2/snapshot?sessionId=&note=` | `image/jpeg` body | `snapshot.endpoint.handle_snapshot(...)` → `202 {jobId}` |
 
 Auth rides in `Sec-WebSocket-Protocol` (`00 §8`); dev mode = shared secret (`ALLOWED_DEV_TOKENS`).
@@ -70,7 +70,7 @@ The orchestrator is **device-blind**. Each client must emit the one **DeviceSour
 1. **One camera session, two outputs** — never two camera sessions.
    - iOS: `AVCaptureSession` + `AVCaptureVideoDataOutput`/movie (H.264) **and** `AVCapturePhotoOutput` (still).
    - Android/Quest: one `CameraDevice` + encoder surface + `ImageReader`.
-2. **Always-on** → `WSS /v2/live`: H.264 video + PCM audio (16 kHz mono mic; 24 kHz speaker out).
+2. **Always-on** → `WSS /v2/live`: **JPEG video frames + PCM audio** (16 kHz mono mic; 24 kHz speaker out). Gemini Live takes PCM + JPEG, not H.264, so for the Live path the device emits JPEG frames (a few FPS, downscaled) — each binary WS frame carries a 1-byte type prefix (`0x01`=PCM audio, `0x02`=JPEG). The orchestrator relays the bytes verbatim into Live's audio/video realtime-input slots (no transcode). The on-demand hi-res snapshot (§3.3 below) is unchanged. A runnable laptop stand-in lives in `clients/live_device_sim.py`.
 3. **On 📷 tap** → `POST /v2/snapshot`: one full-res JPEG (downscale to `SNAPSHOT_MAX_EDGE_PX`). The analysis returns over `/v2/chat` as a `SnapshotAnalysis` card.
 4. **Chat UI** → `WSS /v2/chat`: render the `AgentEvent` union (`00 §2.2` has the Kotlin types) + the typed cards (`04 §3`). InstructionCards reply with `ConfirmationResponse(approved=…)` ("I did it" / "Skip").
 
