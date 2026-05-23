@@ -196,6 +196,10 @@ class SummonGuild(BaseModel):
     smes: list[str]
     contextRefs: list[str] = Field(default_factory=list)
     deadlineMs: int = 30_000
+    briefing: str | None = None                    # NEW; orchestrator-assembled grounding
+                                                   #   (question + board facts + limits +
+                                                   #   latest snapshot) handed to each SME.
+                                                   #   Additive/optional → forward-compatible.
 
 
 class SmeResponse(BaseModel):

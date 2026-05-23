@@ -14,13 +14,14 @@ GEMINI_API_KEY is set.
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import os
 
 from orchestrator.graph.state import DissentResult, GraphDeps, RouteDecision
 from orchestrator.knowledge import KnowledgeAdapter
-from orchestrator.proto.events import DissentPair, SmeResponse, SummonGuild, now_ns
+from orchestrator.proto.events import DissentPair, ProposedAction, SmeResponse, SummonGuild, now_ns
 from orchestrator.safety.gate import SafetyGate
 from orchestrator import seams as _stub
 
@@ -30,6 +31,24 @@ FLASH_MODEL = os.getenv("GEMINI_SME_MODEL", "gemini-3.5-flash")
 SNAPSHOT_MODEL = os.getenv("GEMINI_SNAPSHOT_MODEL", "gemini-3-pro-preview")
 ANTIGRAVITY_AGENT = os.getenv("ANTIGRAVITY_AGENT", "antigravity-preview-05-2026")
 SME_ROSTER = "@power @signal @firmware @layout @librarian @sourcing @reverse @sentinel @scribe @tutor"
+
+#: Persona / lane per SME (spec 02). Used as the system-instruction so each SME
+#: stays in its lane — the Managed-Agents-faithful equivalent of its AGENTS.md
+#: "Role" section. (We run SMEs as fast Flash calls, not the ~70s-cold
+#: Antigravity sandbox; structuring system-vs-input mirrors interactions.create
+#: so the path can be swapped to the Antigravity API later — see build_real_deps.)
+SME_ROLES = {
+    "@power": "Power Engineer — rails, regulators, decoupling, transient response, thermal headroom",
+    "@signal": "Signal-Integrity Engineer — buses, termination, scope/logic captures, comm integrity",
+    "@firmware": "Firmware Engineer — MCU init, serial/console, register sequences, flashing",
+    "@layout": "PCB Layout Engineer — placement, routing, parasitics",
+    "@librarian": "Datasheet Librarian — cites parts, datasheet pages, app notes",
+    "@sourcing": "Sourcing Engineer — part substitutes, BOM, availability",
+    "@reverse": "Reverse-Engineering Tech — reads chip markings / board topology from images",
+    "@sentinel": "Bench Safety Officer — flags hazards only; never diagnoses",
+    "@scribe": "Session Scribe — keeps the report; never gates anything",
+    "@tutor": "Tutor — explains the concept simply",
+}
 
 _client = None
 
@@ -128,22 +147,61 @@ def real_dissent_fn(responses: list[SmeResponse], cross_exam_round: int) -> Diss
         return _stub.stub_dissent_fn(responses, cross_exam_round)
 
 
-def real_summon_one(sme_id: str, summon: SummonGuild) -> SmeResponse:
+def _wrap_action(pa: object, claim: str, knowledge: KnowledgeAdapter | None) -> list[ProposedAction]:
+    """Turn the model's optional proposedAction into a ProposedAction, with the
+    orchestrator attaching the documented-limit citation (never the model — keeps
+    'never invent a setpoint' honest, 03 §3.3.6). Robust: bad shape → no action."""
+    if not isinstance(pa, dict) or not pa.get("tool"):
+        return []
+    tool = str(pa["tool"]).strip()
+    args = pa.get("args") if isinstance(pa.get("args"), dict) else {}
+    risk = pa.get("risk") if pa.get("risk") in ("LOW", "MEDIUM", "HIGH") else "MEDIUM"
+    ref: str | None = None
+    if knowledge is not None and tool == "set_psu":
+        target = args.get("target") or args.get("net")
+        if target:
+            try:
+                lim = knowledge.get_documented_limit(target, "net")
+                if lim.found:
+                    ref = lim.source
+            except Exception:  # noqa: BLE001
+                pass
+    return [ProposedAction(
+        actor="operator", tool=tool, argsJson=json.dumps(args),
+        rationale=claim, risk=risk,
+        instruction=str(pa.get("instruction") or "").strip() or None,
+        documentedLimitRef=ref)]
+
+
+def real_summon_one(sme_id: str, summon: SummonGuild, knowledge: KnowledgeAdapter | None = None) -> SmeResponse:
+    """Summon one SME. Runs as a fast gemini-3.5-flash call (not the ~70s-cold
+    Antigravity sandbox; see ROADMAP). The persona is the system instruction and
+    the orchestrator-assembled `summon.briefing` (question + board facts + limits
+    + snapshot, see GraphEngine._build_briefing) is the grounded input — this is
+    what gives the SME *proper context*. We build the SmeResponse envelope
+    ourselves and attach the documented-limit citation to any proposed step."""
     try:
-        # SMEs run as fast gemini-3.5-flash model calls (no Antigravity sandbox —
-        # the sandbox path is ~70s cold per SME, too slow for live deliberation;
-        # see ROADMAP). The model returns only the substantive fields; we build
-        # the SmeResponse envelope ourselves (reliable — avoids the model having
-        # to emit a fully-valid nested ProposedAction). proposedActions are left
-        # empty for now; a richer action schema can come later.
+        role = SME_ROLES.get(sme_id, "a specialist SME")
+        siblings = [s for s in summon.smes if s != sme_id]
+        system = (
+            f"You are {sme_id}, {role}. You are on Forge's guild advising a HUMAN "
+            "operator at an electronics bench. Forge actuates nothing — you only "
+            "recommend steps the operator performs by hand. Be terse, cite the "
+            "board doc/datasheet, and stay strictly in your lane."
+        )
+        brief = summon.briefing or f"Topic: {summon.topic}"
+        instructions = (
+            "Reply with ONE JSON object: "
+            '{"confidence": <0-1>, "claim": "<one-sentence answer>", '
+            '"rationale": "<2-3 sentences; cite the board doc/datasheet>", '
+            '"proposedAction": null OR {"tool": "set_psu|probe_net|serial_send|flash_mcu|inspect_closeup", '
+            '"args": {"target":"<net>","voltage_v":<n>,...}, '
+            '"instruction": "<imperative step for the operator>", "risk": "LOW|MEDIUM|HIGH"}}. '
+            "Use proposedAction only when a concrete operator step is warranted; else null."
+        )
         prompt = (
-            f"You are {sme_id}, a specialist SME advising a human operator at an "
-            "electronics bench (spec 02). Forge actuates nothing; give cited, "
-            "safety-aware advice.\n"
-            f"Topic: {summon.topic}\nContext refs: {list(summon.contextRefs)}\n"
-            'Respond with a single JSON object: {"confidence": <number 0-1>, '
-            '"claim": "<one-sentence headline answer>", '
-            '"rationale": "<2-3 sentence justification, cite the board doc/datasheet>"}.'
+            f"{system}\n\n=== Guild brief ===\n{brief}\n\n"
+            f"Other SMEs consulted in parallel: {siblings or 'none'}\n\n{instructions}"
         )
         r = _genai().models.generate_content(
             model=FLASH_MODEL,
@@ -151,13 +209,15 @@ def real_summon_one(sme_id: str, summon: SummonGuild) -> SmeResponse:
             config={"response_mime_type": "application/json"},
         )
         d = json.loads(r.text)
-        conf = float(d.get("confidence", 0.5))
+        conf = min(max(float(d.get("confidence", 0.5)), 0.0), 1.0)
+        claim = str(d.get("claim", "")).strip() or f"{sme_id}: (no claim)"
         return SmeResponse(
             smeId=sme_id,
             callId=summon.callId,
-            confidence=min(max(conf, 0.0), 1.0),
-            claim=str(d.get("claim", "")).strip() or f"{sme_id}: (no claim)",
+            confidence=conf,
+            claim=claim,
             rationale=str(d.get("rationale", "")).strip(),
+            proposedActions=_wrap_action(d.get("proposedAction"), claim, knowledge),
             ts=now_ns(),
         )
     except Exception as e:  # noqa: BLE001
@@ -193,7 +253,9 @@ def build_real_deps(knowledge: KnowledgeAdapter) -> GraphDeps:
         gate=SafetyGate(knowledge),
         knowledge=knowledge,
         classify=real_classify,
-        summon_one=real_summon_one,
+        # bind the KnowledgeAdapter so summon_one can cite documented limits on
+        # any proposed step; the engine still calls summon_one(sme, summon).
+        summon_one=functools.partial(real_summon_one, knowledge=knowledge),
         merge_fn=real_merge_fn,
         dissent_fn=real_dissent_fn,
     )

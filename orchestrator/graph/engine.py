@@ -90,8 +90,38 @@ class GraphEngine:
         state.pendingSummon = SummonGuild(
             callId=new_ulid(), topic=decision.topic or "guild",
             smes=decision.smes, deadlineMs=decision.deadline_ms,
-            contextRefs=[state.latestFrame.uri] if state.latestFrame else [])
+            contextRefs=[state.latestFrame.uri] if state.latestFrame else [],
+            briefing=self._build_briefing(state))
         return self._deliberate(state)
+
+    def _build_briefing(self, state: ForgeState) -> str:
+        """Assemble the grounding every SME needs (01 §3.3): the operator's
+        question, the board under test + documented limits, a board-doc passage
+        for the question, and the latest camera snapshot. This is the fix for
+        'SMEs have no proper context' — without it each SME sees only an 8-word
+        topic + opaque frame URIs."""
+        lines: list[str] = []
+        if state.latestTranscriptFinal:
+            lines.append(f"Operator said: {state.latestTranscriptFinal}")
+        bp = getattr(self.deps.knowledge, "board_profile", None)
+        if bp is not None and not getattr(bp, "is_empty", True):
+            parts = ", ".join(f"{p.ref} {p.part}" for p in bp.parts)
+            lines.append(f"Board under test ({bp.id}): {parts}.")
+            limits = "; ".join(
+                f"{n.id}≤{n.max_voltage_v}V" for n in bp.nets
+                if getattr(n, "max_voltage_v", None) is not None)
+            if limits:
+                lines.append(f"Documented net limits: {limits}.")
+        if state.latestTranscriptFinal:
+            try:
+                doc = self.deps.knowledge.lookup_board_doc(state.latestTranscriptFinal)
+                if doc.passages:
+                    lines.append(f"Board doc: {doc.passages[0].text}")
+            except Exception:  # noqa: BLE001 — grounding is best-effort
+                pass
+        if state.latestSnapshot is not None:
+            lines.append(f"Latest camera snapshot (vision): {state.latestSnapshot.analysis}")
+        return "\n".join(lines)
 
     def _deliberate(self, state: ForgeState) -> RunResult:
         while True:

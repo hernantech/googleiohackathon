@@ -234,6 +234,23 @@ def test_gr14_error_envelope_no_fail_stop():
     assert warns
 
 
+def test_briefing_carries_full_context():
+    # The fix for "SMEs have no proper context": the summon briefing must carry
+    # the question, the board facts + a documented limit, and the snapshot vision.
+    eng, _ = make_engine(classify=lambda t, r: RouteDecision(True, ["@power", "@signal"], "comm-timeout"))
+    st = ForgeState(sessionId="s")
+    eng.ingest_snapshot(st, SnapshotAnalysis(
+        jobId="j", frame=FrameRef(uri="mem:f1", width=1, height=1, ts=1, sourceSeq=1),
+        model="m", analysis="cell-stack lead unplugged", ts=1))
+    eng.run(st, "ESP32 can't read the BQ79616 — comm timeout")
+    b = st.pendingSummon.briefing
+    assert b
+    assert "ESP32 can't read" in b                      # operator question
+    assert "BQ79616" in b                                # board facts
+    assert "J3" in b                                     # documented net limit
+    assert "cell-stack lead unplugged" in b              # snapshot vision evidence
+
+
 def test_gr15_replay_reproduces_pending_card():
     step = _set_psu_action(v=30.0)
     eng, _ = make_engine(summon_one=lambda sme, s: _sme("@power", actions=[step])

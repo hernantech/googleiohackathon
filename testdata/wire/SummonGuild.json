@@ -1,4 +1,5 @@
 {
+  "briefing": null,
   "callId": "01HCALL",
   "contextRefs": [
     "gs://forge/frame-00412.jpg"
