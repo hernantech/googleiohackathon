@@ -51,7 +51,10 @@ Make `orchestrator/` (repo root, package `forge-orchestrator`) deploy through th
 - [ ] **LAYOUT DECISION (team):** code is at repo root, but `07 §4` says `forge_v2/orchestrator/`. Keep root (less churn) or move under `forge_v2/`. Then retire the `forge_v2/` scaffold.
 - [ ] **Verify:** arm64 image builds in CI, deploys, `/healthz` green on the VM.
 
-### Phase 3 — Wire the 4 real model seams  ·  task #8  ·  HANDOFF §2.B–D
+### Phase 3 — Wire the 4 real model seams  ·  task #8  ·  HANDOFF §2.B–D  ·  ✅ DONE (verified live on gemini-3.5-flash)
+
+> **SME execution decision:** SMEs (`summon_one`) run as fast **model-only `gemini-3.5-flash`** calls (~10s, forced-JSON → `SmeResponse`), NOT the Antigravity sandbox. The Antigravity sandbox agent is *also* 3.5-flash (verified vs docs) but ~70s cold per SME — too slow for live deliberation. Sandbox path + prewarm/keep-warm (spec 07 §5) is a deferred upgrade. classify/merge/dissent use `gemini-3.5-flash`; snapshot uses `gemini-3-pro-preview`.
+
 Replace stubs with real SDK calls; gate behind key presence, fall back to stubs.
 - [ ] `classify` → Gemini Flash (`GEMINI_SME_MODEL`), `01 §3.2` → `RouteDecision`
 - [ ] `merge_fn` → Gemini Flash, `01 §3.5` → `(headline, supportingSmes)`
@@ -106,7 +109,7 @@ The orchestrator is device-blind; clients emit the one **DeviceSource contract**
 Source: <https://ai.google.dev/gemini-api/docs/custom-agents>. Per-SME work runs in
 Antigravity sandboxes (Linux, 4 CPU / 16 GB, Python 3.12), reused via `environment_id`.
 
-- **Auth:** the same `GEMINI_API_KEY` (`AIza...`). No separate key, Vertex, GCP, or OAuth. `genai.Client()` reads it automatically.
+- **Auth:** the same `GEMINI_API_KEY` (`AIza...`). No separate key, Vertex, GCP, or OAuth. `genai.Client()` reads it automatically. **✅ VERIFIED 2026-05-23** with a live `interactions.create` (our key returned `status=completed`; a sandbox `environment_id` was created) — `google-genai 2.6.0` exposes `client.interactions` + `client.agents`.
 - **Status:** preview. Sandbox compute is **free during preview** (token pricing still applies). Max 1000 agents/account. `antigravity-preview-05-2026` is the only base agent. **Possible allowlist** — if `interactions.create` 403/404s, check the managed-agents quickstart for preview signup.
 - **Correct call shape** (our assumed `interactions.create(environment_id=..., stream=True)` was wrong):
   ```python
