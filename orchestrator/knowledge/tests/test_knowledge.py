@@ -288,8 +288,20 @@ def test_bk10_no_actuation_callables():
 # ─────────────────────────────── BK-11 ───────────────────────────────
 # analyze_snapshot(img, ctx) with a fixture image of the BQ79616 -> the
 # returned SnapshotAnalysis.cites reference a real datasheet/board-doc passage.
-# Depends on the SnapshotAnalyzer (P4), which does not exist yet.
+# (P4 now exists; this exercises the knowledge-grounding contract end to end.)
 
-@pytest.mark.skip(reason="BK-11 needs the SnapshotAnalyzer (P4)")
-def test_bk11_snapshot_cites_grounded():  # pragma: no cover
-    raise NotImplementedError
+def test_bk11_snapshot_cites_grounded():
+    from orchestrator.knowledge import KnowledgeAdapter
+    from orchestrator.snapshot.analyzer import analyze_snapshot
+    from orchestrator.storage.frame_store import InMemoryFrameStore
+
+    snap = analyze_snapshot(
+        jpeg_bytes=b"\xff\xd8fake\xff\xd9", width=1920, height=1080,
+        context="bq79616 power-up wiring",
+        knowledge=KnowledgeAdapter(),
+        model_call=lambda _j, _c, _m: "cell-stack lead unplugged",
+        store=InMemoryFrameStore(),
+    )
+    assert snap.cites, "snapshot analysis must carry a grounded citation"
+    assert snap.cites[0].kind == "datasheet"
+    assert snap.cites[0].note  # non-empty cite
