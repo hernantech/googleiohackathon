@@ -205,7 +205,25 @@ class SessionState(
             is ForgeMsg.ChannelList -> onChannelList(msg.channels)
             is ForgeMsg.ChatMessage -> upsertMessage(msg)
             is ForgeMsg.ChannelUpdate -> applyDelta(msg)
-            is ForgeMsg.Transcript -> _transcript.value = TranscriptUi(msg.text, msg.speaker)
+            is ForgeMsg.Transcript -> {
+                _transcript.value = TranscriptUi(msg.text, msg.speaker)
+                // Surface FINAL voice turns in the feed too — a no-guild Live reply
+                // arrives as a Transcript (HUD only) rather than a ChatMessage, so
+                // without this the spoken conversation is invisible in the guild feed.
+                if (!msg.partial && msg.text.isNotBlank()) {
+                    val isUser = msg.speaker == Speaker.USER
+                    upsertMessage(
+                        ForgeMsg.ChatMessage(
+                            channelId = "#live-feed",
+                            authorId = if (isUser) "@you (voice)" else "@forge (voice)",
+                            authorKind = if (isUser) AuthorKind.USER else AuthorKind.LIVE,
+                            body = msg.text,
+                            messageId = OrchestratorSocket.newUlid(),
+                            ts = msg.ts,
+                        ),
+                    )
+                }
+            }
             is ForgeMsg.ToolCall ->
                 _toolCalls.update {
                     (it + ToolCallUi(msg.name, summarizeArgs(msg.argsJson), inFlight = true))

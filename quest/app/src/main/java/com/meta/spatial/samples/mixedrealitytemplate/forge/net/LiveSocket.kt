@@ -43,13 +43,12 @@ class LiveSocket(
     private val _active = MutableStateFlow(false)
     val active: StateFlow<Boolean> = _active.asStateFlow()
 
-    private val http =
-        OkHttpClient.Builder()
-            .pingInterval(20, TimeUnit.SECONDS)
-            .readTimeout(0, TimeUnit.MILLISECONDS)
-            .build()
+    // No pingInterval: the session streams mic/video constantly, so OkHttp's
+    // ping-timeout (which closed the socket at ~20s) is both unnecessary and harmful.
+    private val http = OkHttpClient.Builder().readTimeout(0, TimeUnit.MILLISECONDS).build()
 
     @Volatile private var ws: WebSocket? = null
+    @Volatile private var ttsFrames = 0
     private val jobs = mutableListOf<Job>()
 
     fun start() {
@@ -104,11 +103,13 @@ class LiveSocket(
         }
 
         override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+            // Inbound TTS is BARE 24 kHz PCM — no type prefix (backend bridge.py
+            // sends ev.audio verbatim). Play as-is.
             val arr = bytes.toByteArray()
             if (arr.isEmpty()) return
-            // Inbound TTS = optional 1-byte prefix + PCM16 (even length). Odd ⇒ strip prefix.
-            val pcm = if (arr.size % 2 == 1) arr.copyOfRange(1, arr.size) else arr
-            speaker.enqueue(pcm)
+            if (ttsFrames == 0) Log.i(TAG, "first TTS frame (${arr.size}B) — duplex confirmed")
+            ttsFrames++
+            speaker.enqueue(arr)
         }
 
         override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
