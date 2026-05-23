@@ -21,6 +21,20 @@
                ReferencedContainer = "container:Forge.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "E67681C8A3FB60D1A136A1E4"
+               BuildableName = "ForgeTests.xctest"
+               BlueprintName = "ForgeTests"
+               ReferencedContainer = "container:Forge.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction
@@ -39,6 +53,17 @@
          </BuildableReference>
       </MacroExpansion>
       <Testables>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "E67681C8A3FB60D1A136A1E4"
+               BuildableName = "ForgeTests.xctest"
+               BlueprintName = "ForgeTests"
+               ReferencedContainer = "container:Forge.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
       <CommandLineArguments>
       </CommandLineArguments>

@@ -100,6 +100,8 @@ struct ExpertChatPanel: View {
             .onAppear {
                 proxy.scrollTo("__bottom__", anchor: .bottom)
             }
+            // Swipe down over the messages to dismiss the keyboard.
+            .scrollDismissesKeyboard(.interactively)
         }
     }
 
@@ -111,12 +113,20 @@ struct ExpertChatPanel: View {
                 .font(PanelTheme.bodyFont)
                 .foregroundStyle(PanelTheme.primaryText)
                 .focused($inputFocused)
+                .submitLabel(.send)
                 .onSubmit { sendMessage() }
                 .textFieldStyle(.plain)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
                 .background(PanelTheme.panelBackgroundLight)
                 .clipShape(RoundedRectangle(cornerRadius: PanelTheme.pillCornerRadius))
+                .toolbar {
+                    // "Done" above the keyboard as an explicit dismiss.
+                    ToolbarItemGroup(placement: .keyboard) {
+                        Spacer()
+                        Button("Done") { inputFocused = false }
+                    }
+                }
             Button(action: sendMessage) {
                 Image(systemName: "arrow.up.circle.fill")
                     .font(.title3)

@@ -1,14 +1,16 @@
 import SwiftUI
 
-// Settings panel: edits orchestrator URL and auth token via
-// UserDefaults suite "ai.forge.ios".  Displayed as a sheet.
+// Settings panel: edits orchestrator URL and auth token via the
+// UserDefaults suite "ai.forge.settings".  Displayed as a sheet.
+// (The suite name must NOT equal the bundle id "ai.forge.ios", or
+// UserDefaults(suiteName:) returns nil and nothing persists.)
 
 struct SettingsPanel: View {
 
     @Environment(\.dismiss) private var dismiss
 
     // Backing defaults suite
-    private let defaults = UserDefaults(suiteName: "ai.forge.ios")
+    private let defaults = UserDefaults(suiteName: "ai.forge.settings")
 
     @State private var urlText: String = ""
     @State private var tokenText: String = ""

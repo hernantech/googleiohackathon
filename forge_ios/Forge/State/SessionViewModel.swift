@@ -85,6 +85,7 @@ final class SessionViewModel {
     // MARK: - start / stop
 
     func start() async {
+        Log.session.info("session start (config \(self.config.orchestratorURL.absoluteString, privacy: .public))")
         // Build modules.
         let cameraActor = ARKitSession()
         let socketActor = OrchestratorSocket(
@@ -253,6 +254,7 @@ final class SessionViewModel {
     // MARK: - Private event routing
 
     private func handleConnectionState(_ state: ConnectionState) async {
+        Log.session.notice("connection → \(String(describing: state), privacy: .public)")
         connection = state
         switch state {
         case .degraded, .closed:
@@ -322,6 +324,7 @@ final class SessionViewModel {
                                     messageId: "dissent-\(report.callId)-\(report.ts)", ts: report.ts))
 
         case let .safetyInterrupt(interrupt):
+            Log.session.warning("safety interrupt \(String(describing: interrupt.severity), privacy: .public): \(interrupt.reason, privacy: .public)")
             safetyInterrupt = interrupt   // Scene shows WARN banner / HALT takeover
 
         case let .summonGuild(summon):
@@ -479,6 +482,7 @@ final class SessionViewModel {
 
     private func enterStubMode() {
         guard stubTask == nil else { return }
+        Log.session.notice("entering stub mode — synthetic detections every 2s")
         let hud = hudStatus
         hudStatus = HudStatus(fps: hud.fps, sessionId: hud.sessionId, stubModes: ["orchestrator"])
 

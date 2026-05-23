@@ -108,6 +108,7 @@ actor OrchestratorSocket {
 
         while !stopped && !fatalClose {
             stateContinuation.yield(.connecting)
+            Log.net.info("connecting to \(self.url.absoluteString, privacy: .public)")
 
             // v2 auth rides the WS subprotocol, not an Authorization header (specs/00 §8, 04 §1).
             let session = URLSession(configuration: .default)
@@ -146,6 +147,7 @@ actor OrchestratorSocket {
 
             if didConnect { backoff.reset() }   // only reset after a real connection
             let delay = backoff.next()
+            Log.net.notice("connection lost — retrying in \(Int(delay))s")
             stateContinuation.yield(.degraded(reason: "orchestrator unreachable — retrying in \(Int(delay))s"))
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
         }
@@ -182,6 +184,7 @@ actor OrchestratorSocket {
                 if !didOpen {
                     didOpen = true
                     stateContinuation.yield(.open)
+                    Log.net.info("socket open (first frame received)")
                 }
                 lastActivity = Date()
                 switch message {
@@ -220,8 +223,10 @@ actor OrchestratorSocket {
         case let .replayDone(done):
             if let cp = done.checkpointId { lastCheckpointId = cp }
         case let .errorEvent(err):
+            Log.net.error("orchestrator error \(err.code, privacy: .public): \(err.message, privacy: .public)")
             if err.isFatal { fatalClose = true }
         case let .goodbye(reason):
+            Log.net.notice("goodbye: \(reason, privacy: .public)")
             if reason == "protocol_mismatch" || reason == "auth_failed" { fatalClose = true }
         default:
             break

@@ -72,7 +72,16 @@ struct PermissionGate<Content: View>: View {
                 prompt
             }
         }
-        .task { await model.requestAll() }
+        .task {
+            // When hosting unit tests, skip the real prompts but resolve the gate
+            // (as granted) so the host app renders content instead of hanging on
+            // the "requesting…" spinner.
+            guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else {
+                model.camera = .granted; model.microphone = .granted; model.speech = .granted
+                return
+            }
+            await model.requestAll()
+        }
     }
 
     private var prompt: some View {

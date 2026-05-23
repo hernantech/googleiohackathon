@@ -102,7 +102,7 @@ struct OnboardingFlow: View {
                 .tint(PanelTheme.accentIC)
             } else {
                 Button("Get Started") {
-                    UserDefaults(suiteName: "ai.forge.ios")?.set(true, forKey: "onboardingComplete")
+                    UserDefaults(suiteName: "ai.forge.settings")?.set(true, forKey: "onboardingComplete")
                     isPresented = false
                 }
                 .buttonStyle(.borderedProminent)

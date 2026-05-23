@@ -5,7 +5,7 @@ struct ConfigStore {
     var authToken: String
 
     static func load() -> ConfigStore {
-        let defaults = UserDefaults(suiteName: "ai.forge.ios")
+        let defaults = UserDefaults(suiteName: "ai.forge.settings")
 
         let rawURL: String = {
             if let env = ProcessInfo.processInfo.environment["ORCHESTRATOR_URL"], !env.isEmpty {

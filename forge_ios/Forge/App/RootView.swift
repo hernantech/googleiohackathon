@@ -6,7 +6,7 @@ import SwiftUI
 struct RootView: View {
     @State private var vm = SessionViewModel(config: .load())
     @State private var sessionRunning = false
-    @State private var showOnboarding = !(UserDefaults(suiteName: "ai.forge.ios")?.bool(forKey: "onboardingComplete") ?? false)
+    @State private var showOnboarding = !(UserDefaults(suiteName: "ai.forge.settings")?.bool(forKey: "onboardingComplete") ?? false)
     @Environment(\.scenePhase) private var scenePhase
 
     #if DEBUG
@@ -17,6 +17,8 @@ struct RootView: View {
         ForgeRealityView()
             .environment(vm)
             .task {
+                // Skip the AR/audio/network session when hosting unit tests.
+                guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
                 if !sessionRunning { sessionRunning = true; await vm.start() }
             }
             .fullScreenCover(isPresented: $showOnboarding) {
