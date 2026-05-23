@@ -18,6 +18,7 @@ import functools
 import json
 import logging
 import os
+import threading
 from typing import Callable
 
 from orchestrator.graph.state import DissentResult, GraphDeps, RouteDecision
@@ -32,6 +33,18 @@ FLASH_MODEL = os.getenv("GEMINI_SME_MODEL", "gemini-3.5-flash")
 SNAPSHOT_MODEL = os.getenv("GEMINI_SNAPSHOT_MODEL", "gemini-3-pro-preview")
 ANTIGRAVITY_AGENT = os.getenv("ANTIGRAVITY_AGENT", "antigravity-preview-05-2026")
 SME_ROSTER = "@power @signal @firmware @layout @librarian @sourcing @reverse @sentinel @scribe @tutor"
+
+#: Wall-clock cap on ONE run_analysis sandbox interaction (model + code-exec
+#: rounds). A hung sandbox must never wedge a summon — on timeout we abandon the
+#: interaction and the SME concludes WITHOUT the computed value (graceful
+#: degradation, 01 §7). Tunable via env for slow/cold environments.
+SANDBOX_ANALYSIS_TIMEOUT_S = float(os.getenv("FORGE_SANDBOX_TIMEOUT_S", "90"))
+#: Cap on streamed intermediate steps forwarded per interaction (defensive bound
+#: against a chatty/runaway stream flooding the chat channel).
+SANDBOX_MAX_STREAM_STEPS = int(os.getenv("FORGE_SANDBOX_MAX_STREAM_STEPS", "60"))
+#: Keep-warm ping cadence: idle Antigravity envs snapshot at ~15 min, so a cheap
+#: interaction every ~240 s keeps the single shared sandbox hot (no cold-start).
+SANDBOX_KEEPWARM_INTERVAL_S = float(os.getenv("FORGE_SANDBOX_KEEPWARM_S", "240"))
 
 #: Persona / lane per SME (spec 02). Used as the system-instruction so each SME
 #: stays in its lane — the Managed-Agents-faithful equivalent of its AGENTS.md
@@ -111,6 +124,249 @@ def _interaction_text(it: object) -> str:
             if t:
                 parts.append(t)
     return "\n".join(parts)
+
+
+# ── Kept-warm Antigravity compute sandbox (ROADMAP "Managed Agents") ─────────
+#
+# A SINGLE process-wide Antigravity sandbox, created lazily on first use and
+# REUSED for every run_analysis call by passing `environment=<environment_id>`.
+# Antigravity sandboxes are Linux + Python 3.12 with the `code_execution` tool —
+# we use them as a "compute tool" that runs REAL code (the SME asks it to
+# compute a number and print it). The same GEMINI_API_KEY authenticates it.
+#
+# Lifecycle:
+#   _get_sandbox_id()  → create-once (environment="remote"), cache the
+#                        environment_id; all subsequent calls reuse it.
+#   run_analysis(...)  → interactions.create(environment=<id>, stream=True);
+#                        streams SSE intermediate steps out via a callback,
+#                        returns the final computed result string.
+#   keepwarm_ping()    → cheap reuse interaction so the env never cold-starts;
+#                        driven by an asyncio task started at orchestrator
+#                        startup (main.py) and cancelled on shutdown.
+#
+# Key-gated + lazy: with no GEMINI_API_KEY / google-genai absent there is NO
+# sandbox and run_analysis is a no-op stub (boot offline, tests pass).
+
+#: Cached environment_id of the one shared warm sandbox (None until created).
+_sandbox_env_id: str | None = None
+#: Serializes the create-once race (the keep-warm task + a first summon could
+#: both try to create the sandbox simultaneously); cheap, only contended at
+#: cold start. interactions.create itself is left un-locked (concurrent reuse of
+#: a warm env is fine and is what keeps SMEs parallel).
+_sandbox_lock = threading.Lock()
+
+
+def _sandbox_enabled() -> bool:
+    """True only when a sandbox can exist: a key is present AND google-genai is
+    importable. Everything sandbox-related no-ops otherwise (offline boot)."""
+    if not os.getenv("GEMINI_API_KEY"):
+        return False
+    try:
+        import google.genai  # noqa: F401  optional [live] dep
+    except Exception:  # noqa: BLE001
+        return False
+    return True
+
+
+def _get_sandbox_id() -> str | None:
+    """Create-once + cache the shared Antigravity sandbox; return its
+    environment_id (or None if sandboxing is unavailable / creation failed).
+
+    The FIRST call creates a fresh remote environment (`environment="remote"`)
+    with a trivial input and records the returned `environment_id`. Every later
+    call returns the cached id so the SAME warm sandbox is reused (no re-create,
+    no cold-start). Failure to create degrades to None — run_analysis then
+    no-ops and the SME answers without the computed value."""
+    global _sandbox_env_id
+    if _sandbox_env_id is not None:
+        return _sandbox_env_id
+    if not _sandbox_enabled():
+        return None
+    with _sandbox_lock:
+        if _sandbox_env_id is not None:  # won the race after acquiring the lock
+            return _sandbox_env_id
+        try:
+            it = _genai().interactions.create(
+                agent=ANTIGRAVITY_AGENT,
+                input="ready",  # trivial provisioning turn; NOT model=+agent= both
+                environment="remote",
+            )
+            env_id = getattr(it, "environment_id", None)
+            if not env_id:
+                log.warning("sandbox create returned no environment_id; disabling")
+                return None
+            _sandbox_env_id = env_id
+            log.info("antigravity sandbox created + cached env_id=%s", env_id)
+            return _sandbox_env_id
+        except Exception as e:  # noqa: BLE001 — preview/allowlist/network
+            log.warning("sandbox create failed (%s); run_analysis will no-op", e)
+            return None
+
+
+def _format_sse_step(event: object) -> str | None:
+    """Turn one InteractionSSEEvent into a SHORT human line for the chat channel,
+    or None to skip (events that aren't operator-interesting).
+
+    Handles the google-genai 2.6.0 event union (discriminated on `event_type`):
+      step.delta → text fragment / code being executed / code-exec result
+      step.start/stop, interaction.* → coarse phase markers (mostly skipped)
+      error      → surfaced so a sandbox failure is visible
+    Defensive: any unknown shape degrades to None rather than raising."""
+    et = getattr(event, "event_type", None)
+    if et == "step.delta":
+        delta = getattr(event, "delta", None)
+        dt = getattr(delta, "type", None)
+        if dt == "text":
+            txt = (getattr(delta, "text", "") or "").strip()
+            return txt[:200] if txt else None
+        if dt == "code_execution_call":
+            args = getattr(delta, "arguments", None)
+            code = (getattr(args, "code", "") or "").strip()
+            if code:
+                first = code.splitlines()[0][:160]
+                return f"running code: {first}"
+            return "running code"
+        if dt == "code_execution_result":
+            res = (getattr(delta, "result", "") or "").strip()
+            return f"code result: {res[:160]}" if res else None
+        return None
+    if et == "error":
+        err = getattr(event, "error", None)
+        msg = getattr(err, "message", None) or "sandbox error"
+        return f"error: {str(msg)[:160]}"
+    # step.start / step.stop / interaction.created / interaction.status_update /
+    # interaction.completed carry no operator-interesting delta → skip.
+    return None
+
+
+def keepwarm_ping() -> bool:
+    """Run ONE cheap reuse interaction against the warm sandbox so an idle env
+    never snapshots/cold-starts (~15 min idle window). Creates the sandbox on the
+    first ping if needed. Returns True on success, False otherwise. Never raises —
+    the caller is a background loop that must keep going (01 §7)."""
+    env_id = _get_sandbox_id()
+    if env_id is None:
+        return False
+    try:
+        _genai().interactions.create(
+            agent=ANTIGRAVITY_AGENT,
+            input="ping",
+            environment=env_id,  # reuse the warm env; NOT environment_id=
+        )
+        return True
+    except Exception as e:  # noqa: BLE001
+        log.warning("sandbox keep-warm ping failed (%s)", e)
+        return False
+
+
+def run_analysis(task: str, on_step: "Callable[[str], None] | None" = None) -> str | None:
+    """Run `task` as REAL code in the kept-warm Antigravity sandbox and return the
+    computed result string (or None if the sandbox is unavailable / it failed /
+    it timed out — the SME then concludes WITHOUT the computed value).
+
+    This is the SME tool-loop's occasional "do real math" escape hatch: the
+    sandbox agent (Gemini 3.5 Flash + code_execution) is told to COMPUTE the
+    answer in Python and PRINT it. We stream via `stream=True` and forward each
+    intermediate SSE step (model output / code being run / code result) to
+    `on_step` the moment it arrives, so the operator can watch the computation
+    unfold; then we return the final printed/answered result.
+
+    Bounded: a wall-clock timeout (SANDBOX_ANALYSIS_TIMEOUT_S) and a streamed-step
+    cap keep a hung or chatty sandbox from wedging a summon — on timeout we
+    abandon and return None."""
+    env_id = _get_sandbox_id()
+    if env_id is None:
+        return None  # no-op stub: sandbox unavailable
+
+    instructions = (
+        "You are a compute tool on an electronics workbench. COMPUTE the answer to "
+        "the task below by WRITING AND RUNNING Python code (use the code execution "
+        "tool — do not just reason in prose). Show the computation, then on the LAST "
+        "line print the final numeric/short result clearly prefixed with 'RESULT: '. "
+        "Be exact; state units.\n\n=== TASK ===\n" + (task or "")
+    )
+
+    import concurrent.futures as _cf
+
+    def _drive() -> str | None:
+        stream = _genai().interactions.create(
+            agent=ANTIGRAVITY_AGENT,
+            input=instructions,
+            environment=env_id,  # reuse the warm sandbox; NOT environment_id=
+            stream=True,
+        )
+        texts: list[str] = []
+        steps = 0
+        final_it = None
+        for event in stream:
+            # the completed event carries the full interaction → use it for the
+            # authoritative final result text.
+            if getattr(event, "event_type", None) in (
+                "interaction.completed", "interaction.created"
+            ):
+                final_it = getattr(event, "interaction", None) or final_it
+            line = _format_sse_step(event)
+            if line is None:
+                continue
+            # collect text deltas for the final-result fallback.
+            et = getattr(event, "event_type", None)
+            if et == "step.delta" and getattr(getattr(event, "delta", None), "type", None) == "text":
+                texts.append(getattr(event.delta, "text", "") or "")
+            if on_step is not None and steps < SANDBOX_MAX_STREAM_STEPS:
+                steps += 1
+                try:
+                    on_step(line)
+                except Exception as e:  # noqa: BLE001 — a bad sink must not fail-stop
+                    log.warning("run_analysis on_step sink raised (%s); continuing", e)
+        # Prefer the completed interaction's output_text; fall back to the
+        # concatenated streamed text. Extract the RESULT: line when present.
+        full = ""
+        if final_it is not None:
+            full = (getattr(final_it, "output_text", "") or _interaction_text(final_it))
+        if not full:
+            full = "".join(texts)
+        return _extract_result(full)
+
+    # Run the (blocking) SSE drive on a worker thread bounded by a wall-clock
+    # timeout. On timeout we do NOT join the worker (shutdown wait=False) so a
+    # hung sandbox can't wedge the summon — the worker is abandoned and the SME
+    # concludes without the computed value.
+    ex = _cf.ThreadPoolExecutor(max_workers=1, thread_name_prefix="run_analysis")
+    fut = ex.submit(_drive)
+    try:
+        result = fut.result(timeout=SANDBOX_ANALYSIS_TIMEOUT_S)
+        ex.shutdown(wait=False)
+        return result
+    except _cf.TimeoutError:
+        log.warning("run_analysis timed out after %ss; SME continues without it",
+                    SANDBOX_ANALYSIS_TIMEOUT_S)
+        ex.shutdown(wait=False)  # do NOT block on the hung worker
+        return None
+    except Exception as e:  # noqa: BLE001 — never wedge a summon
+        log.warning("run_analysis failed (%s); SME continues without it", e)
+        ex.shutdown(wait=False)
+        return None
+
+
+def _extract_result(text: str) -> str | None:
+    """Pull the SME-facing answer out of the sandbox's final output: prefer the
+    last `RESULT: ...` line we asked it to print; else the last non-empty line;
+    else the trimmed whole. None when there is nothing usable."""
+    if not text or not text.strip():
+        return None
+    lines = [ln.strip() for ln in text.strip().splitlines() if ln.strip()]
+    for ln in reversed(lines):
+        low = ln.lower()
+        if low.startswith("result:"):
+            return ln[len("result:"):].strip() or ln
+    return (lines[-1] if lines else text.strip())[:500]
+
+
+def reset_sandbox_for_tests() -> None:
+    """Test hook: drop the cached environment_id so a fresh test can re-exercise
+    create-once. Not used in production."""
+    global _sandbox_env_id
+    _sandbox_env_id = None
 
 
 # ── seams ──────────────────────────────────────────────────────────────────
@@ -270,12 +526,49 @@ _TOOL_SCHEMAS = [
             "required": ["target", "kind"],
         },
     },
+    {
+        "name": "run_analysis",
+        "description": (
+            "Run a quantitative analysis as REAL Python code in a compute "
+            "sandbox and get back the computed result. Use ONLY when you need to "
+            "actually CALCULATE a number from values you already have (e.g. a "
+            "worst-case rail current from a list of loads, a thermal/power "
+            "budget, an RC time constant, a divider). Do NOT use it to look up "
+            "facts (use the lookup tools) or to invent inputs. Pass the full "
+            "computation as `task`, INCLUDING the concrete input numbers and the "
+            "units you want; the sandbox computes and returns the result string."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "task": {
+                    "type": "STRING",
+                    "description": (
+                        "Self-contained computation to perform, with concrete "
+                        "input values and desired units, e.g. 'On a 3.3V rail "
+                        "with loads 120mA, 80mA, 250mA, compute worst-case total "
+                        "current in A.'"
+                    ),
+                },
+            },
+            "required": ["task"],
+        },
+    },
 ]
 
 
-def _dispatch_tool(name: str, args: dict, knowledge: KnowledgeAdapter) -> dict:
+def _dispatch_tool(
+    name: str, args: dict, knowledge: KnowledgeAdapter,
+    on_step: "Callable[[str], None] | None" = None,
+) -> dict:
     """Execute a declared tool against the bound adapter; return a JSON-able dict.
-    Read-only — nothing here actuates hardware (BK-10)."""
+    Read-only knowledge lookups — nothing here actuates hardware (BK-10).
+
+    `run_analysis` is the one exception to "read-only adapter": it runs REAL code
+    in the kept-warm Antigravity sandbox (still no hardware — pure compute). Its
+    intermediate SSE steps are forwarded to `on_step` so they stream live; the
+    returned dict carries the computed result (or a no-op marker when the sandbox
+    is unavailable / timed out, so the SME concludes without it)."""
     if name == "lookup_datasheet":
         res = knowledge.lookup_datasheet(
             str(args.get("part", "")), str(args.get("query", "")),
@@ -289,6 +582,12 @@ def _dispatch_tool(name: str, args: dict, knowledge: KnowledgeAdapter) -> dict:
             str(args.get("target", "")), str(args.get("kind", "")),
         )
         return res.model_dump()
+    if name == "run_analysis":
+        computed = run_analysis(str(args.get("task", "")), on_step=on_step)
+        if computed is None:
+            return {"computed": None,
+                    "note": "compute sandbox unavailable; reason from documented values instead"}
+        return {"computed": computed}
     return {"error": f"unknown tool {name!r}"}
 
 
@@ -329,8 +628,12 @@ def _run_sme_tool_loop(
         f"Other SMEs consulted in parallel: {siblings or 'none'}\n\n"
         "You have tools to PULL board knowledge: lookup_datasheet, "
         "lookup_board_doc, get_documented_limit. Call them as needed to ground "
-        "your answer BEFORE concluding; you may call several in sequence. When you "
-        "have enough, stop calling tools and you will be asked for the final JSON."
+        "your answer BEFORE concluding; you may call several in sequence. You ALSO "
+        "have run_analysis, which runs REAL Python in a compute sandbox — use it "
+        "ONLY to actually CALCULATE a number from inputs you already have (e.g. a "
+        "worst-case rail current or thermal/power budget), passing the concrete "
+        "values + units. When you have enough, stop calling tools and you will be "
+        "asked for the final JSON."
     )
 
     client = _genai()
@@ -367,11 +670,25 @@ def _run_sme_tool_loop(
         for fc in calls:
             args = dict(fc.args or {})
             knowledge_for_call = knowledge or KnowledgeAdapter()
-            result = _dispatch_tool(fc.name, args, knowledge_for_call)
+
+            # For run_analysis, forward each sandbox SSE step (model output /
+            # code-exec / result) to the SME's channel AS IT ARRIVES, so the
+            # operator watches the computation unfold (#12 emit sink). Each step
+            # rides the same on_tool_call sink as a run_analysis "step" call.
+            on_step = None
+            if fc.name == "run_analysis" and on_tool_call is not None:
+                def on_step(line: str) -> None:  # noqa: B023 — fc is per-iter, intended
+                    try:
+                        on_tool_call({"name": "run_analysis",
+                                      "args": {"step": line}, "result": None})
+                    except Exception as e:  # noqa: BLE001
+                        log.warning("on_tool_call (step) sink raised (%s); continuing", e)
+
+            result = _dispatch_tool(fc.name, args, knowledge_for_call, on_step)
             call = {"name": fc.name, "args": args, "result": result}
             tool_calls.append(call)
-            # Surface this retrieval to the SME's channel the moment it runs
-            # (streaming); a raising sink must not break the loop (01 §7).
+            # Surface this completed tool call to the SME's channel (streaming);
+            # a raising sink must not break the loop (01 §7).
             if on_tool_call is not None:
                 try:
                     on_tool_call(call)
