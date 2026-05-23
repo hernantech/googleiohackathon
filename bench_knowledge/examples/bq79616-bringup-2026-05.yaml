@@ -1,0 +1,43 @@
+# bq79616-bringup-2026-05.yaml — bundled demo board profile (05 §2, §6).
+#
+# A static, declarative *description of the board under test*. It is NOT a
+# device driver config: nothing here actuates hardware. The KnowledgeAdapter
+# loads it once at startup; the guild reads it via lookup_board_doc /
+# get_documented_limit, and the SafetyGate reads its documented limits (§4).
+board_profile:
+  id: "bq79616-bringup-2026-05"
+  description: "ESP32 host + BQ79616 16-cell monitor bring-up board (Shack15 demo)"
+
+  parts:
+    - { ref: "U1", part: "ESP32-WROOM-32", role: "host MCU", datasheet: "esp32-wroom-32" }
+    - { ref: "U2", part: "BQ79616",        role: "16s battery monitor AFE", datasheet: "bq79616" }
+    - { ref: "U3", part: "BQ79600",        role: "host-side comm bridge (UART<->daisy-chain)", datasheet: "bq79600" }
+    - { ref: "U4", part: "AMS1117-3.3",    role: "VIO LDO for U1/U3 logic", datasheet: "ams1117" }
+
+  rails:
+    - { id: "3V3",      nominal_v: 3.3,  max_current_a: 0.5, powers: ["U1", "U3", "U4-out"] }
+    - { id: "VIO",      nominal_v: 3.3,  max_current_a: 0.1, powers: ["U2-logic"] }
+    - { id: "CELLSTK",  nominal_v: 30.0, max_current_a: 0.5, powers: ["U2-cells"],
+        note: "emulated cell stack; 16 series cells x ~1.875 V" }
+
+  nets:                          # documented limits the SafetyGate enforces (§4)
+    - { id: "J3",  desc: "cell-sim ladder input (top of stack)", max_voltage_v: 30.0, test_point: "J3-1" }
+    - { id: "TP4", desc: "VIO at U2", max_voltage_v: 5.5, test_point: "TP4" }
+    - { id: "TP7", desc: "U3 UART TX to U1", max_voltage_v: 3.6, test_point: "TP7" }
+
+  test_points:                   # where to put the DMM probe for `probe_net`
+    - { id: "TP4",  net: "VIO",     desc: "VIO rail at U2 pin 12" }
+    - { id: "TP9",  net: "CELLSTK", desc: "top-of-stack at U2 BAT pin" }
+    - { id: "J3-1", net: "J3",      desc: "cell-sim ladder positive" }
+
+  preconditions:                 # SafetyGate checks these before HIGH steps (§4)
+    flash_requires_psu_off: true
+    rework_requires_psu_off: true
+
+  procedures:                    # documented bring-up steps the guild can cite
+    - id: "bq79616-power-up"
+      summary: >
+        BQ79616 will not respond on the comm bus until a valid cell stack is
+        present on its VC pins. Apply the emulated stack to J3 BEFORE expecting
+        any comm. See bq79616 datasheet §7 (Power-Up) and the wake-tone timing.
+      cite: "bq79616 datasheet §7"
