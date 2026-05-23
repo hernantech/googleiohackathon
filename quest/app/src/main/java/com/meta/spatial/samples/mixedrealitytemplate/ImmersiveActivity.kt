@@ -111,14 +111,14 @@ class ImmersiveActivity : AppSystemActivity() {
 
     scene.setViewOrigin(0.0f, 0.0f, 2.0f, 180.0f)
 
-    // Forge panels. The wearer is at (0,0,2) facing -Z, so content at z<2 is in
-    // front; the 180°-about-Y rotation (matching Composition.glxf's panel) turns
-    // each quad's face toward the wearer. Offset +X (the wearer's right) so the
-    // baseline ui_example panel stays visible as a regression anchor for now.
+    // Forge panels, centered in front of the wearer. The wearer is at (0,0,2)
+    // facing -Z, so content at z<2 is in front; the 180°-about-Y rotation turns
+    // each quad's face toward the wearer. Chat is the hero (center), HUD above,
+    // confirmation below.
     val faceUser = Quaternion(0f, 0f, 1f, 0f) // 180° about Y, (w,x,y,z)
-    spawnForgePanel(R.id.panel_forge_hud, Vector3(1.0f, 1.78f, 1.0f), faceUser)
-    spawnForgePanel(R.id.panel_forge_chat, Vector3(1.0f, 1.35f, 1.0f), faceUser)
-    spawnForgePanel(R.id.panel_forge_confirmation, Vector3(1.0f, 0.82f, 1.0f), faceUser)
+    spawnForgePanel(R.id.panel_forge_hud, Vector3(0f, 1.78f, 1.0f), faceUser)
+    spawnForgePanel(R.id.panel_forge_chat, Vector3(0f, 1.35f, 1.0f), faceUser)
+    spawnForgePanel(R.id.panel_forge_confirmation, Vector3(0f, 0.82f, 1.0f), faceUser)
 
     android.util.Log.i("MRT", "onSceneReady done — Forge panels mounted + GLXF panel")
   }
@@ -208,10 +208,17 @@ class ImmersiveActivity : AppSystemActivity() {
 
   private fun loadGLXF(): Job {
     return activityScope.launch {
-      glXFManager.inflateGLXF(
-          "apk:///scenes/Composition.glxf".toUri(),
-          keyName = "example_key_name",
-      )
+      // Composition.glxf is intentionally empty now (the template's white panel
+      // was removed); all Forge panels are placed programmatically in
+      // onSceneReady. Guard the inflate so an empty scene can't abort boot.
+      try {
+        glXFManager.inflateGLXF(
+            "apk:///scenes/Composition.glxf".toUri(),
+            keyName = "example_key_name",
+        )
+      } catch (e: Exception) {
+        android.util.Log.w("MRT", "GLXF inflate skipped: ${e.message}")
+      }
     }
   }
 }
