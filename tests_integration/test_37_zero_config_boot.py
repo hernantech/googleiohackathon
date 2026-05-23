@@ -76,8 +76,8 @@ def test_37_healthz_ok_zero_env_vars():
     assert integrations["gemini"] == "stub", (
         f"expected gemini=stub (no GEMINI_API_KEY), got {integrations['gemini']!r}"
     )
-    assert integrations["managed_agents"] == "stub", (
-        f"expected managed_agents=stub, got {integrations['managed_agents']!r}"
+    assert integrations["smes"] == "stub", (
+        f"expected smes=stub, got {integrations['smes']!r}"
     )
     # board_profile = "bundled-demo" when BOARD_PROFILE env var is absent
     assert integrations["board_profile"] == "bundled-demo", (
