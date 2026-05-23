@@ -1,0 +1,29 @@
+﻿,Line #,Name,Description,Revision ID,Revision Status,Quantity,Manufacturer 1,Manufacturer Part Number 1,Manufacturer Lifecycle 1,Supplier 1,Supplier Part Number 1,Supplier Unit Price 1,Supplier Subtotal 1
+,7,1N4148WQ-7-F,DIODE GEN PURP 100V 300MA SOD123,CMP-12791-000025-1,Up to date,2,Diodes Zetex,1N4148WQ-7-F,Volume Production,Mouser,621-1N4148WQ-7-F,0.18,0.36
+,12,SSR,SSR RELAY SPST-NO 400MA 0-60V G3VM-61G2,CMP-08825-000037-1,Up to date,1,Omron,G3VM-61G2,Volume Production,Digikey,Z3019-ND,2.8,2.8
+,14,DSP1DC12VF,"DSP Relays, 12 V Coil Voltage, 300 mW Nominal Operating Power, -40 to 65 degC, 6-Pin DSP, Carton, Case, RoHS",CMP-1503-00060-1,Up to date,1,Panasonic,DSP1-DC12V-F,Volume Production,,,,
+,18,4.9k,"RES Thick Film, 4.99kΩ, 1%, 0.125W, 100ppm/°C, 0805",CMP-2001-03973-2,Up to date,2,Vishay,CRCW08054K99FKEA,Volume Production,Newark,53K0219,0.006,0.012
+,27,Comparator,IC DUAL DIFF COMPARATOR 8-SOIC LM2903AVQDRQ1,CMP-04896-000057-1,Up to date,2,Texas Instruments,LM2903AVQDRQ1,Volume Production,Mouser,595-LM2903AVQDRQ1,0.66,1.32
+,21,866,ERA3AEB8660V,CMP-2000-00135-1,Up to date,1,Panasonic,ERA-3AEB8660V,Volume Production,Digikey,P866DBCT-ND,0.1,0.1
+,23,0.01,RES 0.01 OHM 1% 1W 1206 ERJ-8BWFR010V,CMP-2003-00764-2,Up to date,4,Panasonic,ERJ-8BWFR010V,Unknown,Newark,08N2405,0.152,0.608
+,15,100k,"RES Thick Film, 100kΩ, 1%, 1W, 100ppm/°C, 2512",CMP-02407-004199-1,Up to date,6,Vishay,CRCW2512100KFKEG,Volume Production,Newark,53K3943,0.033,0.198
+,16,2k,"RES Thick Film, 2kΩ, 1%, 1W, 100ppm/°C, 2512",CMP-02407-009223-1,Up to date,2,Vishay,CRCW25122K00FKEG,Volume Production,Arrow Electronics,CRCW25122K00FKEG,0.0401,0.0802
+,17,20k,"RES Thick Film, 20kΩ, 5%, 1W, 200ppm/°C, 2512",CMP-02407-001956-1,Up to date,1,Vishay Dale,CRCW251220K0JNEG,Volume Production,Digikey,541-20KXCT-ND,0.26,0.26
+,1,NCP785AH120T1G,"Fixed Positive Standard Regulator, 12VCMOS, PDSO3",CMP-00010-2,Up to date,4,ON Semiconductor,NCP785AH120T1G,Volume Production,Newark,71AC3125,1.43,5.72
+,3,2.2uF,Multilayer Ceramic Capacitors 2.2uF ±10% 450V X6S SMD 2220,CMP-2000-07525-2,Up to date,3,TDK,C5750X6S2W225K250KA,Volume Production,Newark,95Y0117,1.53,4.59
+,9,0.24 i2t,"NANO2(R) Slo-Blo(R) Fuse, 0.5 A, 125 V, -55 to 125 degC, 2-Pin SMD, RoHS, Tape and Reel",CMP-2000-05698-1,Up to date,1,Littelfuse,0452.500MRL,Volume Production,Farnell,2383281,1.5,1.5
+,26,5003,"Test Point, Orange, 1-Pin THD, RoHS",CMP-1672-00009-1,Up to date,13,Keystone Electronics,5003,Volume Production,Mouser,534-5003,0.256,3.328
+,10,0.8 i2t,FUSE BOARD MNT 1A 500VDC SMT,CMP-08605-000128-1,Up to date,1,Littelfuse,0885001.DR,Volume Production,Digikey,F10985CT-ND,4.48,4.48
+,2,0.1uF,CAP CER 0.1UF 25V X7R 0603,CMP-2006-03057-2,Up to date,1,KEMET,C0603C104K3RACTU,Volume Production,Mouser,80-C0603C104K3R,0.1,0.1
+,5,0.33uF,,CMP-2007-04608-1,Up to date,1,Kyocera AVX,08053C334KAT2A,Volume Production,Newark,88W4184,0.022,0.022
+,6,0.1uF,CAP CER 0.1UF 16V X7R 0402,CMP-2100-03641-2,Up to date,1,Murata,GRM155R71C104KA88D,Not Recommended for New Design,Digikey,490-3261-1-ND,0.1,0.1
+,11,43045-0224,CONN HEADER VERT 2POS,CMP-04776-000969-1,Up to date,6,Molex,43045-0224,Volume Production,Arrow Electronics,43045-0224,0.6785,4.07
+,28,UA78L05CPK,IC REG LINEAR 5V 100MA SOT89-3,CMP-2000-07341-2,Up to date,1,Texas Instruments,UA78L05CPK,Volume Production,Mouser,595-UA78L05CPK,0.36,0.36
+,19,12k,"RES Thick Film, 12kΩ, 1%, 0.25W, 100ppm/°C, 1206",CMP-2003-04847-2,Up to date,1,Vishay,CRCW120612K0FKEA,Volume Production,Avnet,53K1948,0.019,0.019
+,20,4.7k,RES SMD 4.7K OHM 1% 1/4W 1206,CMP-03412-037805-1,Up to date,1,Yageo,RC1206FR-074K7L,Volume Production,Newark,49AK3770,0.01,0.01
+,22,787,"RES Thick Film, 787Ω, 1%, 0.25W, 100ppm/°C, 1206",CMP-2003-02383-2,Up to date,1,Vishay,CRCW1206787RFKEA,Volume Production,Arrow Electronics,CRCW1206787RFKEA,0.0007,0.0007
+,25,RH0505K000FE02,"Fixed Resistor, Wire Wound, 50W, 5000ohm, 1% +/-Tol, 20ppm/Cel, Chassis Mount",CMP-009-00225-1,Out of date,1,Vishay,RH0505K000FE02,Volume Production,Arrow Electronics,RH0505K000FE02,3.35,3.35
+,,LI12-1A85,,CMP-047-000006-1,Up to date,1,,,,,,,
+,,597-3311-407F,"LED Green, 75 mW, 30 mA, -30 to 85 degC, 2-Pin SMD, RoHS, Tape and Reel",CMP-2000-05651-1,Up to date,3,Dialight,597-3311-407F,Obsolete,,,,
+,,1206W4F5100T5E,250mW Thick Film Resistors 200V ±100ppm/℃ ±1% 510Ω 1206 Chip Resistor - Surface Mount ROHS,CMP-009-00228-1,Up to date,3,Royal Electronic Factory,1206W4F5100T5E,,,,,
+,,CL31A226KAHNNNE,"Ceramic Capacitor, Multilayer, Ceramic, 25V, 10% +Tol, 10% -Tol, X5R, 15% TC, 22uF, Surface Mount, 1206",CMP-001-00121-1,Up to date,3,Samsung,CL31A226KAHNNNE,Volume Production,Mouser,187-CL31A226KAHNNNE,0.18,0.54
