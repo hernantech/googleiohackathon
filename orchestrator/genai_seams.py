@@ -29,7 +29,7 @@ from orchestrator import seams as _stub
 log = logging.getLogger("forge.genai_seams")
 
 FLASH_MODEL = os.getenv("GEMINI_SME_MODEL", "gemini-3.5-flash")
-SNAPSHOT_MODEL = os.getenv("GEMINI_SNAPSHOT_MODEL", "gemini-3-pro-preview")
+SNAPSHOT_MODEL = os.getenv("GEMINI_SNAPSHOT_MODEL", "gemini-3.5-flash")
 ANTIGRAVITY_AGENT = os.getenv("ANTIGRAVITY_AGENT", "antigravity-preview-05-2026")
 SME_ROSTER = "@power @signal @firmware @layout @librarian @sourcing @reverse @sentinel @scribe @tutor"
 
@@ -278,7 +278,9 @@ def real_summon_one(sme_id: str, summon: SummonGuild, knowledge: KnowledgeAdapte
         )
         brief = summon.briefing or f"Topic: {summon.topic}"
         instructions = (
-            "Reply with ONE JSON object: "
+            "Output ONLY a single raw JSON object — no markdown code fences, no prose "
+            "before or after, all keys and string values double-quoted (strict JSON). "
+            "Shape: "
             '{"confidence": <0-1>, "claim": "<one-sentence answer>", '
             '"rationale": "<2-3 sentences; cite the board doc/datasheet>", '
             '"proposedAction": null OR {"tool": "set_psu|probe_net|serial_send|flash_mcu|inspect_closeup", '

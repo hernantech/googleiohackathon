@@ -9,7 +9,9 @@ confirmation the run returns `paused`; `resume()` applies the operator's answer.
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
+import os
 import re
 
 from orchestrator.graph.state import (
@@ -37,6 +39,9 @@ from orchestrator.safety.gate import GateSession
 
 _MENTION = re.compile(r"@([a-z0-9\-]+)", re.I)
 CROSS_EXAM_CAP = 2
+#: Max wall-clock to wait for one SME. Generous: managed-agent (Antigravity)
+#: turns run ~60-80s. Fast Flash/stub calls return well under this.
+SME_WAIT_S = float(os.getenv("FORGE_SME_WAIT_S", "150"))
 
 
 class GraphEngine:
@@ -167,16 +172,25 @@ class GraphEngine:
         return decision
 
     def _parallel_summon(self, state: ForgeState) -> None:
-        """Fan out; per-SME timeout → confidence-0 placeholder, others continue (GR-5)."""
+        """Fan out to all SMEs CONCURRENTLY (GR-5). Managed-agent turns are
+        ~60-80s each, so a sequential loop would be N× that — threads make the
+        guild ≈ the slowest single SME instead. Each SME's failure/timeout →
+        a confidence-0 placeholder; the others still land."""
         summon = state.pendingSummon
-        state.activeSmes = list(summon.smes)
-        for sme in summon.smes:
-            try:
-                resp = self.deps.summon_one(sme, summon)
-            except Exception as e:  # noqa: BLE001 — timeout / cold-start
-                resp = SmeResponse(
-                    smeId=sme, callId=summon.callId, confidence=0.0,
-                    claim="<timeout>", rationale=f"{e!r}", ts=now_ns())
+        smes = list(summon.smes)
+        state.activeSmes = smes
+        results: dict[str, SmeResponse] = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(smes))) as ex:
+            futs = {sme: ex.submit(self.deps.summon_one, sme, summon) for sme in smes}
+            for sme in smes:
+                try:
+                    results[sme] = futs[sme].result(timeout=SME_WAIT_S)
+                except Exception as e:  # noqa: BLE001 — timeout / cold-start / call error
+                    results[sme] = SmeResponse(
+                        smeId=sme, callId=summon.callId, confidence=0.0,
+                        claim="<timeout>", rationale=f"{e!r}", ts=now_ns())
+        for sme in smes:  # deterministic roster order
+            resp = results[sme]
             state.smeResponses[sme] = resp
             for action in resp.proposedActions:
                 state.invokerOf[id(action)] = sme
