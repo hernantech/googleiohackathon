@@ -20,7 +20,9 @@
 		277B3BA579AC9409D954264F /* InputAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9950E9540C1B37438DC585BC /* InputAction.swift */; };
 		2A052C462CBB414508A591F0 /* FrameEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB2720CE413165AA75A8FBA4 /* FrameEncoder.swift */; };
 		2A80475938C9204D671F3A31 /* ProtoTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 462606ABC6D7BBF4ADDA36DA /* ProtoTests.swift */; };
+		2C9E91C8EB7D8231B648E840 /* CaptureSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03BDF74C333456D9884E8CD4 /* CaptureSession.swift */; };
 		2E87A2F78D70BC5A2C51BC92 /* AgentProtoCoding.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A8FE5339CD6C6B4B2B3497E /* AgentProtoCoding.swift */; };
+		3369FB1D6C54DCF251F56791 /* WireFixtureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C930C636801E51987A9521B /* WireFixtureTests.swift */; };
 		37A92AD4DD3591A6CE898B21 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1834DBE3709F8D800FD3F876 /* Assets.xcassets */; };
 		3E9A57A001B234888C20CEA3 /* TestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52757170BADA3F584EA25A13 /* TestSupport.swift */; };
 		3ECB3B28BCA453DEC517495D /* VoiceCommandRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = B27BED36895579BE20336AD9 /* VoiceCommandRegistry.swift */; };
@@ -40,7 +42,9 @@
 		AA03ACA18852B1B871C0F7EA /* ReplayBuffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56707BBE30C62CC626F70032 /* ReplayBuffer.swift */; };
 		AB0B70A509B10B5111B07074 /* ComponentDetailCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9B0831E3866D89996057B2F /* ComponentDetailCard.swift */; };
 		AD93FA8786136A52D79DCD2F /* SettingsPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D4D3222412AD574A6DEFACB /* SettingsPanel.swift */; };
+		AEB9A3A261E9EB4C404508BB /* LiveSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = B28BDA8849A7F8B9A2362A08 /* LiveSocket.swift */; };
 		B030B3F1164B63BF8907C0B8 /* MaskPolygonizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F0A9AC501D8CA04232B1BC2 /* MaskPolygonizer.swift */; };
+		B0B58F826118A668FA827897 /* SnapshotClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1221F67B4E97A58E1649FC77 /* SnapshotClient.swift */; };
 		B10B3A5E1C78E0B1E1616D8E /* AgentProtoV2.swift in Sources */ = {isa = PBXBuildFile; fileRef = A93B973F99E0DC12F47C9154 /* AgentProtoV2.swift */; };
 		B4E2A16F013FA548CF36BAC0 /* ToastStack.swift in Sources */ = {isa = PBXBuildFile; fileRef = 014EC9724741CC5A718B8334 /* ToastStack.swift */; };
 		B7828F5E713516C283749ECC /* PanelTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3918F9C727410F19B767A856 /* PanelTheme.swift */; };
@@ -59,6 +63,7 @@
 		E9C2615BA9622866494F1204 /* OrchestratorSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = E27FC69FEA175D63D404871E /* OrchestratorSocket.swift */; };
 		EEF1E608162D4915D6443C26 /* AnchorRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2AD1DE8E802644F9A44ADCB /* AnchorRegistry.swift */; };
 		F2734551790B85192C1DBAED /* DetectionStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6952AC6643EB044E96C21E21 /* DetectionStoreTests.swift */; };
+		F73D719058C12639288317AD /* wire in Resources */ = {isa = PBXBuildFile; fileRef = B68E7EF3149D2A744AE9DB0B /* wire */; };
 		F828631545719FD52B576020 /* PermissionGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5951FF2104D0632C18DF6362 /* PermissionGate.swift */; };
 		F85557098E3D93524CE4A4F3 /* PoseProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AE265CC4F559618EDCB5A72 /* PoseProvider.swift */; };
 		F92FE8844FF8FD38B763623E /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFF494AF406676E03BF3C6D1 /* RootView.swift */; };
@@ -77,11 +82,14 @@
 
 /* Begin PBXFileReference section */
 		014EC9724741CC5A718B8334 /* ToastStack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToastStack.swift; sourceTree = "<group>"; };
+		03BDF74C333456D9884E8CD4 /* CaptureSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureSession.swift; sourceTree = "<group>"; };
 		083616D473CEA14CCE83E1B6 /* ForgeTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = ForgeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		0F0A9AC501D8CA04232B1BC2 /* MaskPolygonizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MaskPolygonizer.swift; sourceTree = "<group>"; };
+		1221F67B4E97A58E1649FC77 /* SnapshotClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotClient.swift; sourceTree = "<group>"; };
 		1834DBE3709F8D800FD3F876 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		19076821242D12F7282D856C /* IntrinsicsExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntrinsicsExtractor.swift; sourceTree = "<group>"; };
 		19292F223206D2E4AC0B6C4F /* ConfigStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigStore.swift; sourceTree = "<group>"; };
+		1C930C636801E51987A9521B /* WireFixtureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WireFixtureTests.swift; sourceTree = "<group>"; };
 		1DF82308800A960C5A8A2CFD /* OnboardingFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingFlow.swift; sourceTree = "<group>"; };
 		2473C703710C1E26F8ECB0F7 /* AgentProto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentProto.swift; sourceTree = "<group>"; };
 		25F5ED7A0FF8AB3239D1F958 /* ARKitSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ARKitSession.swift; sourceTree = "<group>"; };
@@ -113,7 +121,9 @@
 		AC51C6E583DE73DFBC499068 /* ChatStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatStoreTests.swift; sourceTree = "<group>"; };
 		AD2282500FB33CF7DDB55A50 /* SafetyInterruptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafetyInterruptView.swift; sourceTree = "<group>"; };
 		B27BED36895579BE20336AD9 /* VoiceCommandRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceCommandRegistry.swift; sourceTree = "<group>"; };
+		B28BDA8849A7F8B9A2362A08 /* LiveSocket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveSocket.swift; sourceTree = "<group>"; };
 		B48BEB9CD80991A72299E8F8 /* OrchestratorSocketIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrchestratorSocketIntegrationTests.swift; sourceTree = "<group>"; };
+		B68E7EF3149D2A744AE9DB0B /* wire */ = {isa = PBXFileReference; lastKnownFileType = folder; name = wire; path = ../testdata/wire; sourceTree = SOURCE_ROOT; };
 		B77A0AF976DC7C2D1FA0AD6E /* HudOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HudOverlay.swift; sourceTree = "<group>"; };
 		B82D30B428778C8A6DBDDEA2 /* BackoffPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackoffPolicy.swift; sourceTree = "<group>"; };
 		B84CA6D663F536D09A7BF802 /* DetectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetectionStore.swift; sourceTree = "<group>"; };
@@ -159,6 +169,15 @@
 			path = Audio;
 			sourceTree = "<group>";
 		};
+		3C2E562B1EA2313F77029B66 /* agent-a151d15dfdb997b7b */ = {
+			isa = PBXGroup;
+			children = (
+				B75D73086FBA5EDC8A83F97E /* testdata */,
+			);
+			name = "agent-a151d15dfdb997b7b";
+			path = ..;
+			sourceTree = "<group>";
+		};
 		45564352D17DEC5AA90D689D /* Vision */ = {
 			isa = PBXGroup;
 			children = (
@@ -193,6 +212,7 @@
 			isa = PBXGroup;
 			children = (
 				25F5ED7A0FF8AB3239D1F958 /* ARKitSession.swift */,
+				03BDF74C333456D9884E8CD4 /* CaptureSession.swift */,
 				BB2720CE413165AA75A8FBA4 /* FrameEncoder.swift */,
 				19076821242D12F7282D856C /* IntrinsicsExtractor.swift */,
 			);
@@ -223,7 +243,9 @@
 			isa = PBXGroup;
 			children = (
 				B82D30B428778C8A6DBDDEA2 /* BackoffPolicy.swift */,
+				B28BDA8849A7F8B9A2362A08 /* LiveSocket.swift */,
 				E27FC69FEA175D63D404871E /* OrchestratorSocket.swift */,
+				1221F67B4E97A58E1649FC77 /* SnapshotClient.swift */,
 			);
 			path = Net;
 			sourceTree = "<group>";
@@ -267,9 +289,18 @@
 				B48BEB9CD80991A72299E8F8 /* OrchestratorSocketIntegrationTests.swift */,
 				462606ABC6D7BBF4ADDA36DA /* ProtoTests.swift */,
 				52757170BADA3F584EA25A13 /* TestSupport.swift */,
+				1C930C636801E51987A9521B /* WireFixtureTests.swift */,
 				7C20B3567016C9524020151D /* Support */,
 			);
 			path = ForgeTests;
+			sourceTree = "<group>";
+		};
+		B75D73086FBA5EDC8A83F97E /* testdata */ = {
+			isa = PBXGroup;
+			children = (
+				B68E7EF3149D2A744AE9DB0B /* wire */,
+			);
+			path = testdata;
 			sourceTree = "<group>";
 		};
 		C433A466F9B6D97DDEAA7E16 /* Input */ = {
@@ -307,6 +338,7 @@
 		EFCB33EBE3812EE38333409F = {
 			isa = PBXGroup;
 			children = (
+				3C2E562B1EA2313F77029B66 /* agent-a151d15dfdb997b7b */,
 				DD5E2466335F3E5F02761415 /* Forge */,
 				A8EDD928972BE9F7AD6E8768 /* ForgeTests */,
 				4D92E0C67E2F7B85FC426E2E /* Products */,
@@ -349,6 +381,7 @@
 			buildConfigurationList = FEAA56CCDEB51C2BA172EB8E /* Build configuration list for PBXNativeTarget "ForgeTests" */;
 			buildPhases = (
 				0F3390C797B685858251930A /* Sources */,
+				E4358197F61FBF3C1AEB3D37 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -410,6 +443,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		E4358197F61FBF3C1AEB3D37 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F73D719058C12639288317AD /* wire in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -425,6 +466,7 @@
 				CF64EAA7CD0A5A0718C91526 /* OrchestratorSocketIntegrationTests.swift in Sources */,
 				2A80475938C9204D671F3A31 /* ProtoTests.swift in Sources */,
 				3E9A57A001B234888C20CEA3 /* TestSupport.swift in Sources */,
+				3369FB1D6C54DCF251F56791 /* WireFixtureTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -438,6 +480,7 @@
 				B10B3A5E1C78E0B1E1616D8E /* AgentProtoV2.swift in Sources */,
 				EEF1E608162D4915D6443C26 /* AnchorRegistry.swift in Sources */,
 				62D82AC9C580C65B1FF01817 /* BackoffPolicy.swift in Sources */,
+				2C9E91C8EB7D8231B648E840 /* CaptureSession.swift in Sources */,
 				0C57B47C8EC2CF34C7D150A1 /* ChatCardView.swift in Sources */,
 				977B018777237CCF2367CB94 /* ChatStore.swift in Sources */,
 				AB0B70A509B10B5111B07074 /* ComponentDetailCard.swift in Sources */,
@@ -454,6 +497,7 @@
 				0E73B32C0E5E49A559D609EB /* HudOverlay.swift in Sources */,
 				277B3BA579AC9409D954264F /* InputAction.swift in Sources */,
 				17D85CDC487743C4F4343E79 /* IntrinsicsExtractor.swift in Sources */,
+				AEB9A3A261E9EB4C404508BB /* LiveSocket.swift in Sources */,
 				B9709DB3E10394A844C58BEE /* Log.swift in Sources */,
 				B030B3F1164B63BF8907C0B8 /* MaskPolygonizer.swift in Sources */,
 				BC1DB449ECEFE81ECE9F6E3E /* MicCapture.swift in Sources */,
@@ -471,6 +515,7 @@
 				9645168FCDDC538ADEE64FD7 /* Segmenter.swift in Sources */,
 				E63DD8E40424CEEFF2A5EDC1 /* SessionViewModel.swift in Sources */,
 				AD93FA8786136A52D79DCD2F /* SettingsPanel.swift in Sources */,
+				B0B58F826118A668FA827897 /* SnapshotClient.swift in Sources */,
 				1A0D9507CFC97AACC05DACE7 /* SpeakerPlayer.swift in Sources */,
 				BDDF3748A01824528D987142 /* SpikeView.swift in Sources */,
 				E6BD1B764ACD59BC53940FEF /* TapInput.swift in Sources */,

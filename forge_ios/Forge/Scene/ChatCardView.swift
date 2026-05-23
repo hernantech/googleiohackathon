@@ -10,11 +10,12 @@ struct ChatCardView: View {
     var body: some View {
         Group {
             switch card {
-            case .smeResponse(let r):   SmeResponseCard(response: r)
-            case .dissentReport(let r): DissentReportCard(report: r)
-            case .actionCard(let a):    ActionCardView(card: a)
-            case .mergedOpinion(let m): MergedOpinionCard(opinion: m)
+            case .smeResponse(let r):     SmeResponseCard(response: r)
+            case .dissentReport(let r):   DissentReportCard(report: r)
+            case .actionCard(let a):      ActionCardView(card: a)
+            case .mergedOpinion(let m):   MergedOpinionCard(opinion: m)
             case .safetyInterrupt(let s): SafetyInterruptCard(interrupt: s)
+            case .snapshotAnalysis(let sa): SnapshotAnalysisCard(analysis: sa)
             case .toolResult(let name, let json): RawDisclosure(label: name, json: json)
             case .unsupported(let kind, let json): RawDisclosure(label: "raw:\(kind)", json: json)
             case nil:
@@ -308,6 +309,61 @@ private struct SafetyInterruptCard: View {
         interrupt.severity == .halt
             ? Color(red: 0.95, green: 0.2, blue: 0.1)
             : Color(red: 1.0, green: 0.72, blue: 0.0)
+    }
+}
+
+// MARK: - Snapshot Analysis Card (specs/00 §4.2, specs/04 §3.1 CB-11)
+
+private struct SnapshotAnalysisCard: View {
+
+    let analysis: SnapshotAnalysis
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "camera.viewfinder")
+                    .foregroundStyle(PanelTheme.accentIC)
+                Text("Snapshot — \(analysis.model)")
+                    .font(PanelTheme.labelFont)
+                    .foregroundStyle(PanelTheme.primaryText)
+                Spacer()
+                Text("\(analysis.frame.width)×\(analysis.frame.height)")
+                    .font(PanelTheme.captionFont)
+                    .foregroundStyle(PanelTheme.captionText)
+            }
+            Text(analysis.analysis)
+                .font(PanelTheme.bodyFont)
+                .foregroundStyle(PanelTheme.secondaryText)
+                .lineLimit(expanded ? nil : 4)
+                .fixedSize(horizontal: false, vertical: expanded)
+            if !analysis.cites.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(analysis.cites, id: \.uri) { cite in
+                            EvidenceChip(evidence: cite)
+                        }
+                    }
+                }
+            }
+            if analysis.analysis.count > 200 {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
+                } label: {
+                    Label(expanded ? "Less" : "More", systemImage: expanded ? "chevron.up" : "chevron.down")
+                        .font(PanelTheme.captionFont)
+                        .foregroundStyle(PanelTheme.captionText)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(PanelTheme.panelPadding)
+        .background(PanelTheme.panelBackgroundLight)
+        .clipShape(RoundedRectangle(cornerRadius: PanelTheme.cornerRadius))
+        .overlay(
+            RoundedRectangle(cornerRadius: PanelTheme.cornerRadius)
+                .stroke(PanelTheme.accentIC.opacity(0.4), lineWidth: 1)
+        )
     }
 }
 

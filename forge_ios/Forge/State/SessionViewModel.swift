@@ -54,6 +54,9 @@ final class SessionViewModel {
     // MARK: Private — modules (instantiated in start())
 
     private var socket: OrchestratorSocket?
+    private var liveSocket: LiveSocket?
+    private var captureSession: CaptureSession?
+    private var snapshotClient: SnapshotClient?
     private var camera: ARKitSession?
     private var mic: MicCapture?
     private var speaker: SpeakerPlayer?
@@ -86,10 +89,22 @@ final class SessionViewModel {
 
     func start() async {
         Log.session.info("session start (config \(self.config.orchestratorURL.absoluteString, privacy: .public))")
+
         // Build modules.
         let cameraActor = ARKitSession()
+        let captureActor = CaptureSession()
         let socketActor = OrchestratorSocket(
             url: config.orchestratorURL,
+            authToken: config.authToken,
+            sessionId: sessionId
+        )
+        let liveSocketActor = LiveSocket(
+            url: config.liveURL,
+            authToken: config.authToken,
+            sessionId: sessionId
+        )
+        let snapClient = SnapshotClient(
+            baseURL: config.snapshotBaseURL,
             authToken: config.authToken,
             sessionId: sessionId
         )
@@ -104,7 +119,10 @@ final class SessionViewModel {
         let voiceCmdReg = VoiceCommandRegistry()
 
         camera = cameraActor
+        captureSession = captureActor
         socket = socketActor
+        liveSocket = liveSocketActor
+        snapshotClient = snapClient
         mic = micActor
         speaker = speakerActor
         voiceIntent = voiceIntentActor
@@ -123,11 +141,13 @@ final class SessionViewModel {
 
         // Start modules.
         try? await cameraActor.start()
+        try? await captureActor.start()
         await socketActor.start()
+        await liveSocketActor.start()
         try? await micActor.start()
         try? await speakerActor.start()
 
-        // Socket connection state → update `connection`.
+        // Chat bus connection state → update `connection`.
         let t1 = Task { [weak self] in
             guard let self else { return }
             for await state in socketActor.state {
@@ -135,7 +155,7 @@ final class SessionViewModel {
             }
         }
 
-        // Socket events → route.
+        // Chat bus events → route.
         let t2 = Task { [weak self] in
             guard let self else { return }
             for await event in socketActor.events {
@@ -143,24 +163,25 @@ final class SessionViewModel {
             }
         }
 
-        // Mic → socket.
+        // Mic PCM → LiveSocket as raw binary (16 kHz mono; specs/00 §4.1).
         let t3 = Task { [weak self] in
             guard let self else { return }
             for await chunk in await micActor.chunks {
-                guard let socket = self.socket else { continue }
-                try? await socket.sendAudio(chunk)
+                guard let live = self.liveSocket else { continue }
+                // Send the raw PCM bytes directly; the orchestrator passes them
+                // through to Gemini Live without re-framing (HANDOFF §2.D).
+                try? await live.sendBinary(chunk.pcm)
             }
         }
 
         // Voice transcripts → command registry.
-        let t4 = Task { [weak self] in
-            guard let self else { return }
+        let t4 = Task {
             for await transcript in await voiceIntentActor.transcripts {
                 await voiceCmdReg.feed(transcript)
             }
         }
 
-        // Command registry actions → send.
+        // Command registry actions → dispatch.
         let t5 = Task { [weak self] in
             guard let self else { return }
             for await action in voiceCmdReg.actions {
@@ -168,29 +189,35 @@ final class SessionViewModel {
             }
         }
 
-        // Camera frames → throttle to GEMINI_REFRESH → sendFrame.
+        // H.264 encoded video → LiveSocket (always-on; specs/00 §4.1).
         let t6 = Task { [weak self] in
             guard let self else { return }
-            var lastSentNs: Int64 = 0
+            for await chunk in await captureActor.encodedVideoChunks {
+                let fps = 30
+                let currentHud = self.hudStatus
+                self.hudStatus = HudStatus(fps: fps, sessionId: currentHud.sessionId,
+                                           stubModes: currentHud.stubModes)
+                guard let live = self.liveSocket else { continue }
+                try? await live.sendBinary(chunk)
+            }
+        }
+
+        // ARKit frames → replay buffer (for SceneMeshQuery / spatial queries).
+        let t7 = Task { [weak self] in
+            guard let self else { return }
+            var lastRecordedNs: Int64 = 0
             for await frame in await cameraActor.frames {
                 let nowNs = frame.timestampNs
-                guard nowNs - lastSentNs >= Int64(self.geminiRefreshNs) else { continue }
-                lastSentNs = nowNs
-
-                // FPS bookkeeping (rough: frames seen per refresh window).
-                let fps = Int(1_000_000_000 / max(1, self.geminiRefreshNs))
-                let currentHud = self.hudStatus
-                self.hudStatus = HudStatus(fps: fps, sessionId: currentHud.sessionId, stubModes: currentHud.stubModes)
-
-                guard let socket = self.socket, let camera = self.camera else { continue }
-                if let chunk = await camera.captureLatestJPEG(quality: 0.7) {
+                guard nowNs - lastRecordedNs >= Int64(geminiRefreshNs) else { continue }
+                lastRecordedNs = nowNs
+                if let camera = self.camera,
+                   let chunk = await camera.captureLatestJPEG(quality: 0.7) {
                     await self.replay.record(frame: chunk)
-                    try? await socket.sendFrame(chunk)
                 }
             }
         }
 
-        childTasks = [t1, t2, t3, t4, t5, t6]
+        childTasks = [t1, t2, t3, t4, t5, t6, t7]
     }
 
     func stop() async {
@@ -200,11 +227,16 @@ final class SessionViewModel {
         stubTask = nil
 
         await socket?.stop()
+        await liveSocket?.stop()
+        await captureSession?.stop()
         await camera?.stop()
         await mic?.stop()
         await speaker?.stop()
 
         socket = nil
+        liveSocket = nil
+        captureSession = nil
+        snapshotClient = nil
         camera = nil
         mic = nil
         speaker = nil
@@ -250,6 +282,36 @@ final class SessionViewModel {
 
     /// Dismiss an acknowledged safety interrupt (HALT takeover / WARN banner).
     func dismissSafetyInterrupt() { safetyInterrupt = nil }
+
+    /// 📷 tap handler (HANDOFF §3 item 3, specs/00 §4.2):
+    ///   1. Capture a full-res still from the photo output.
+    ///   2. Downscale to ≤ SNAPSHOT_MAX_EDGE_PX.
+    ///   3. POST to /v2/snapshot; the SnapshotAnalysis arrives over the chat bus.
+    func takeSnapshot(note: String? = nil) {
+        Task { [weak self] in
+            guard let self else { return }
+            guard let captureActor = captureSession,
+                  let client = snapshotClient else {
+                Log.session.warning("takeSnapshot: capture session or client not available")
+                return
+            }
+            guard let rawJpeg = await captureActor.captureStill() else {
+                Log.session.warning("takeSnapshot: AVCapturePhotoOutput returned nil")
+                return
+            }
+            let jpeg = SnapshotClient.downscaleIfNeeded(rawJpeg)
+            do {
+                let jobId = try await client.post(jpeg: jpeg, note: note)
+                Log.session.info("snapshot posted, jobId=\(jobId, privacy: .public)")
+                chat.system("Snapshot submitted (jobId: \(jobId)) — analysis arriving…",
+                            channelId: "#live-feed", ts: nowNs())
+            } catch {
+                Log.session.error("snapshot POST failed: \(error.localizedDescription, privacy: .public)")
+                chat.system("Snapshot failed: \(error.localizedDescription)",
+                            channelId: "#general", ts: nowNs())
+            }
+        }
+    }
 
     // MARK: - Private event routing
 
@@ -464,12 +526,18 @@ final class SessionViewModel {
             )
             try? await socket?.send(event)
 
+        case .voiceCommand(intent: .capture, rawText: let rawText):
+            // Voice "capture" → trigger snapshot with transcription as a note.
+            takeSnapshot(note: rawText.isEmpty ? nil : rawText)
+
         case let .confirmationAccepted(callId: callId):
             // The iOS approve button is the "chat" approval path (specs/03 §2).
+            // InstructionCard "I did it" → ConfirmationResponse(approved: true).
             try? await socket?.send(.confirmationResponse(callId: callId, approved: true, approverChannel: .chat))
             pendingConfirmation = nil
 
         case let .confirmationRejected(callId: callId):
+            // InstructionCard "Skip" → ConfirmationResponse(approved: false).
             try? await socket?.send(.confirmationResponse(callId: callId, approved: false, approverChannel: .chat))
             pendingConfirmation = nil
 

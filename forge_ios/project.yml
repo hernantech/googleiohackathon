@@ -38,6 +38,11 @@ targets:
     deploymentTarget: "17.0"
     sources:
       - path: ForgeTests
+      # Wire fixture JSON files (WP-6 parity) — copied into test bundle as "wire/" at build time.
+      # The folder reference is under testdata/ relative to the repo root.
+      - path: ../testdata/wire
+        buildPhase: resources
+        type: folder
     dependencies:
       - target: Forge
     settings:

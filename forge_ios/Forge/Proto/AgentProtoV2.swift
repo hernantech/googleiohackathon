@@ -124,11 +124,40 @@ struct EvidenceRef: Codable, Equatable {
     var note: String?
 }
 
+// Actor enum mirrors Kotlin `Actor` and Python `ProposedAction.actor` (specs/00 §2.1).
+enum Actor: String, Codable, Equatable {
+    case `operator` = "operator"
+    case guild = "guild"
+}
+
 struct ProposedAction: Codable, Equatable {
+    var actor: Actor
     var tool: String
     var argsJson: String
     var rationale: String
     var risk: Risk
+    var instruction: String?
+    var documentedLimitRef: String?
+
+    enum CodingKeys: String, CodingKey {
+        case actor, tool, argsJson, rationale, risk, instruction, documentedLimitRef
+    }
+    init(actor: Actor = .operator, tool: String, argsJson: String, rationale: String, risk: Risk,
+         instruction: String? = nil, documentedLimitRef: String? = nil) {
+        self.actor = actor; self.tool = tool; self.argsJson = argsJson
+        self.rationale = rationale; self.risk = risk
+        self.instruction = instruction; self.documentedLimitRef = documentedLimitRef
+    }
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        actor = try c.decodeIfPresent(Actor.self, forKey: .actor) ?? .operator
+        tool = try c.decode(String.self, forKey: .tool)
+        argsJson = try c.decode(String.self, forKey: .argsJson)
+        rationale = try c.decode(String.self, forKey: .rationale)
+        risk = try c.decode(Risk.self, forKey: .risk)
+        instruction = try c.decodeIfPresent(String.self, forKey: .instruction)
+        documentedLimitRef = try c.decodeIfPresent(String.self, forKey: .documentedLimitRef)
+    }
 }
 
 struct SmeResponse: Codable, Equatable, Identifiable {
@@ -245,14 +274,22 @@ struct ActionCard: Codable, Equatable {
     var bodyMarkdown: String
     var diffMarkdown: String?
     var risk: Risk
+    /// Shown alongside the card so the operator can sanity-check the cited limit (specs/00 §2.1).
+    var documentedLimit: String?
+    /// v2: default "I did it" (was "Approve") — specs/00 §2.1.
     var affirmLabel: String
+    /// v2: default "Skip" (was "Hold") — specs/00 §2.1.
     var denyLabel: String
 
-    enum CodingKeys: String, CodingKey { case title, bodyMarkdown, diffMarkdown, risk, affirmLabel, denyLabel }
+    enum CodingKeys: String, CodingKey {
+        case title, bodyMarkdown, diffMarkdown, risk, documentedLimit, affirmLabel, denyLabel
+    }
     init(title: String, bodyMarkdown: String, diffMarkdown: String? = nil, risk: Risk,
-         affirmLabel: String = "Approve", denyLabel: String = "Hold") {
+         documentedLimit: String? = nil,
+         affirmLabel: String = "I did it", denyLabel: String = "Skip") {
         self.title = title; self.bodyMarkdown = bodyMarkdown; self.diffMarkdown = diffMarkdown
-        self.risk = risk; self.affirmLabel = affirmLabel; self.denyLabel = denyLabel
+        self.risk = risk; self.documentedLimit = documentedLimit
+        self.affirmLabel = affirmLabel; self.denyLabel = denyLabel
     }
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
@@ -260,14 +297,52 @@ struct ActionCard: Codable, Equatable {
         bodyMarkdown = try c.decode(String.self, forKey: .bodyMarkdown)
         diffMarkdown = try c.decodeIfPresent(String.self, forKey: .diffMarkdown)
         risk = try c.decode(Risk.self, forKey: .risk)
-        affirmLabel = try c.decodeIfPresent(String.self, forKey: .affirmLabel) ?? "Approve"
-        denyLabel = try c.decodeIfPresent(String.self, forKey: .denyLabel) ?? "Hold"
+        documentedLimit = try c.decodeIfPresent(String.self, forKey: .documentedLimit)
+        affirmLabel = try c.decodeIfPresent(String.self, forKey: .affirmLabel) ?? "I did it"
+        denyLabel = try c.decodeIfPresent(String.self, forKey: .denyLabel) ?? "Skip"
     }
 
     /// Parse the JSON string carried in `ConfirmationRequest.actionCardJson`.
     static func from(json: String?) -> ActionCard? {
         guard let json, let data = json.data(using: .utf8) else { return nil }
         return try? JSONDecoder().decode(ActionCard.self, from: data)
+    }
+}
+
+// MARK: - Snapshot card types (specs/00 §4.2; NOT AgentEvent members — card payloads)
+
+/// A stored image artifact. Carried inside `SnapshotAnalysis.frame` and as an
+/// `EvidenceRef(kind:"frame")`. The `kind` field in the fixture is "FrameRef".
+struct FrameRef: Codable, Equatable {
+    var uri: String
+    var width: Int
+    var height: Int
+    var ts: Int64
+    var sourceSeq: Int
+
+    // Tolerant decode: the wire fixture includes a `kind` field we ignore.
+    enum CodingKeys: String, CodingKey { case uri, width, height, ts, sourceSeq }
+}
+
+/// Result of `analyze_snapshot()`. Carried inside a `ChatMessage(bodyContentType: .json)`.
+/// Not an AgentEvent — like ActionCard, it is a card payload (specs/00 §4.2, §11 WP-11).
+struct SnapshotAnalysis: Codable, Equatable {
+    var jobId: String
+    var frame: FrameRef
+    var model: String
+    var analysis: String
+    var cites: [EvidenceRef]
+    var ts: Int64
+
+    enum CodingKeys: String, CodingKey { case jobId, frame, model, analysis, cites, ts }
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        jobId = try c.decode(String.self, forKey: .jobId)
+        frame = try c.decode(FrameRef.self, forKey: .frame)
+        model = try c.decode(String.self, forKey: .model)
+        analysis = try c.decode(String.self, forKey: .analysis)
+        cites = try c.decodeIfPresent([EvidenceRef].self, forKey: .cites) ?? []
+        ts = try c.decode(Int64.self, forKey: .ts)
     }
 }
 
@@ -300,6 +375,7 @@ enum ChatCard: Equatable {
     case actionCard(ActionCard)
     case mergedOpinion(MergedOpinion)
     case safetyInterrupt(SafetyInterrupt)
+    case snapshotAnalysis(SnapshotAnalysis)
     case toolResult(name: String, json: String)
     case unsupported(kind: String, json: String)
 
@@ -309,13 +385,14 @@ enum ChatCard: Equatable {
         let dec = JSONDecoder()
         guard let probe = try? dec.decode(KindProbe.self, from: data) else { return nil }
         switch probe.kind {
-        case "SmeResponse":     return (try? dec.decode(SmeResponse.self, from: data)).map(ChatCard.smeResponse)
-        case "DissentReport":   return (try? dec.decode(DissentReport.self, from: data)).map(ChatCard.dissentReport)
-        case "ActionCard":      return (try? dec.decode(ActionCard.self, from: data)).map(ChatCard.actionCard)
-        case "MergedOpinion":   return (try? dec.decode(MergedOpinion.self, from: data)).map(ChatCard.mergedOpinion)
-        case "SafetyInterrupt": return (try? dec.decode(SafetyInterrupt.self, from: data)).map(ChatCard.safetyInterrupt)
-        case "ToolResult":      return .toolResult(name: probe.name ?? "tool", json: body)
-        default:                return .unsupported(kind: probe.kind, json: body)
+        case "SmeResponse":       return (try? dec.decode(SmeResponse.self, from: data)).map(ChatCard.smeResponse)
+        case "DissentReport":     return (try? dec.decode(DissentReport.self, from: data)).map(ChatCard.dissentReport)
+        case "ActionCard":        return (try? dec.decode(ActionCard.self, from: data)).map(ChatCard.actionCard)
+        case "MergedOpinion":     return (try? dec.decode(MergedOpinion.self, from: data)).map(ChatCard.mergedOpinion)
+        case "SafetyInterrupt":   return (try? dec.decode(SafetyInterrupt.self, from: data)).map(ChatCard.safetyInterrupt)
+        case "SnapshotAnalysis":  return (try? dec.decode(SnapshotAnalysis.self, from: data)).map(ChatCard.snapshotAnalysis)
+        case "ToolResult":        return .toolResult(name: probe.name ?? "tool", json: body)
+        default:                  return .unsupported(kind: probe.kind, json: body)
         }
     }
 
