@@ -19,6 +19,9 @@ import okhttp3.WebSocketListener
 import okio.ByteString
 import okio.ByteString.Companion.toByteString
 
+/** Live session lifecycle for UI feedback (server accept can lag tens of seconds). */
+enum class LivePhase { IDLE, CONNECTING, LIVE }
+
 /**
  * Duplex Gemini Live client over `/v2/live` (spec 00 §4.1, backend
  * `LiveDuplexBridge`). Each outbound binary frame is `[1-byte type][payload]`:
@@ -40,8 +43,8 @@ class LiveSocket(
     private val capture: PassthroughCapture,
     private val enableVideo: Boolean = true,
 ) {
-    private val _active = MutableStateFlow(false)
-    val active: StateFlow<Boolean> = _active.asStateFlow()
+    private val _phase = MutableStateFlow(LivePhase.IDLE)
+    val phase: StateFlow<LivePhase> = _phase.asStateFlow()
 
     // No pingInterval: the session streams mic/video constantly, so OkHttp's
     // ping-timeout (which closed the socket at ~20s) is both unnecessary and harmful.
@@ -53,6 +56,8 @@ class LiveSocket(
 
     fun start() {
         if (ws != null) return
+        ttsFrames = 0
+        _phase.value = LivePhase.CONNECTING // immediate UI feedback; server accept can lag
         val url = "$liveUrl?sessionId=$sessionId&client=quest"
         ws = http.newWebSocket(Request.Builder().url(url).build(), Listener())
         Log.i(TAG, "live connecting: $url")
@@ -66,7 +71,7 @@ class LiveSocket(
         speaker.stop()
         ws?.close(1000, "client stop")
         ws = null
-        _active.value = false
+        _phase.value = LivePhase.IDLE
     }
 
     private fun frame(type: Byte, payload: ByteArray): ByteString {
@@ -78,7 +83,7 @@ class LiveSocket(
 
     private inner class Listener : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: Response) {
-            _active.value = true
+            _phase.value = LivePhase.LIVE
             speaker.start()
             mic.start()
             Log.i(TAG, "live open — streaming mic${if (enableVideo) " + video" else ""}")
