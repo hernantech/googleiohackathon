@@ -3,6 +3,7 @@ plugins {
   alias(libs.plugins.jetbrains.kotlin.android)
   alias(libs.plugins.meta.spatial.plugin)
   alias(libs.plugins.jetbrains.kotlin.plugin.compose)
+  alias(libs.plugins.jetbrains.kotlin.plugin.serialization)
 }
 
 android {
@@ -18,6 +19,14 @@ android {
     targetSdk = 34
     versionCode = 1
     versionName = "1.0"
+
+    // Forge orchestrator (deployed, stub mode). Override per-build with
+    // -PorchestratorUrl=ws://host:port/v2/chat if needed.
+    buildConfigField(
+        "String",
+        "ORCHESTRATOR_URL",
+        "\"${project.findProperty("orchestratorUrl") ?: "ws://20.230.188.247:8080/v2/chat"}\"",
+    )
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -52,6 +61,12 @@ android {
 //noinspection UseTomlInstead
 dependencies {
   implementation(libs.androidx.core.ktx)
+
+  // Forge orchestrator client: WebSocket + JSON wire protocol (spec 00)
+  implementation(libs.okhttp)
+  implementation(libs.kotlinx.serialization.json)
+  implementation(libs.kotlinx.coroutines.android)
+
   testImplementation(libs.junit)
   androidTestImplementation(libs.androidx.junit)
   androidTestImplementation(libs.androidx.espresso.core)

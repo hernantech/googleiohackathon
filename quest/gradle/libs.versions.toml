@@ -9,6 +9,9 @@ espressoCore = "3.6.1"
 composeActivity = "1.9.2"
 lifecycleRuntimeKtx = "2.8.6"
 composeBom = "2024.09.03"
+okhttp = "4.12.0"
+kotlinxSerialization = "1.7.3"
+coroutines = "1.10.1"
 
 [libraries]
 # Meta Spatial SDK Libraries
@@ -26,6 +29,11 @@ meta-spatial-sdk-datamodelinspector = { group = "com.meta.spatial", name = "meta
 meta-spatial-sdk-isdk = { group = "com.meta.spatial", name = "meta-spatial-sdk-isdk", version.ref = "spatialsdk" }
 meta-spatial-sdk-spatialaudio = { group = "com.meta.spatial", name = "meta-spatial-sdk-spatialaudio", version.ref = "spatialsdk" }
 meta-spatial-sdk-uiset = { group = "com.meta.spatial", name = "meta-spatial-sdk-uiset", version.ref = "spatialsdk" }
+
+# Networking + serialization (Forge orchestrator client)
+okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
+kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 
 # Core Android Libraries
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -48,4 +56,5 @@ androidx-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit
 android-application = { id = "com.android.application", version.ref = "agp" }
 jetbrains-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 jetbrains-kotlin-plugin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin"}
+jetbrains-kotlin-plugin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin"}
 meta-spatial-plugin = { id = "com.meta.spatial.plugin", version.ref = "spatialsdk" }
