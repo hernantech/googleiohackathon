@@ -148,8 +148,8 @@ private fun JsonCard(body: String) {
 
 @Composable
 private fun QuickPrompts(session: SessionState) {
-    val cameraReady by session.cameraReady.collectAsState()
     val snapping by session.snapshotInFlight.collectAsState()
+    val live by session.liveActive.collectAsState()
     // No @mention — Gemini's server-side classifier routes to the right agents.
     val presets =
         listOf(
@@ -158,10 +158,22 @@ private fun QuickPrompts(session: SessionState) {
             "What should I probe first to debug the bus?" to "what to probe",
         )
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        // 🎙 Gemini Live duplex — voice + camera in, Gemini orchestrates the guild.
+        Button(
+            onClick = { session.toggleLive() },
+            colors =
+                ButtonDefaults.buttonColors(
+                    containerColor = if (live) ForgeTheme.riskHigh.copy(alpha = 0.30f) else ForgeTheme.riskLow.copy(alpha = 0.22f),
+                    contentColor = if (live) ForgeTheme.riskHigh else ForgeTheme.riskLow,
+                ),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+        ) {
+            Text(if (live) "⏹ Live" else "🎙 Go Live", fontSize = ForgeTheme.caption.size)
+        }
         // 📷 snapshot → /v2/snapshot; analysis returns as a card in #live-feed.
         Button(
             onClick = { session.captureAndAnalyze(note = null) },
-            enabled = !snapping, // tapping when !cameraReady triggers the in-VR permission prompt
+            enabled = !snapping, // tapping when !mediaReady triggers the in-VR permission prompt
             colors =
                 ButtonDefaults.buttonColors(
                     containerColor = ForgeTheme.accentLive.copy(alpha = 0.22f),

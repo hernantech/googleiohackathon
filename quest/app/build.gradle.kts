@@ -32,6 +32,11 @@ android {
         "ORCHESTRATOR_SNAPSHOT_URL",
         "\"${project.findProperty("orchestratorSnapshotUrl") ?: "http://20.230.188.247:8080/v2/snapshot"}\"",
     )
+    buildConfigField(
+        "String",
+        "ORCHESTRATOR_LIVE_URL",
+        "\"${project.findProperty("orchestratorLiveUrl") ?: "ws://20.230.188.247:8080/v2/live"}\"",
+    )
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

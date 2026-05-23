@@ -2,6 +2,7 @@ package com.meta.spatial.samples.mixedrealitytemplate.forge.state
 
 import android.util.Log
 import com.meta.spatial.samples.mixedrealitytemplate.forge.camera.PassthroughCapture
+import com.meta.spatial.samples.mixedrealitytemplate.forge.net.LiveSocket
 import com.meta.spatial.samples.mixedrealitytemplate.forge.net.OrchestratorSocket
 import com.meta.spatial.samples.mixedrealitytemplate.forge.net.SnapshotUploader
 import com.meta.spatial.samples.mixedrealitytemplate.forge.net.SocketState
@@ -49,16 +50,21 @@ class SessionState(
     private val scope: CoroutineScope,
     private val capture: PassthroughCapture? = null,
     private val uploader: SnapshotUploader? = null,
+    private val liveSocket: LiveSocket? = null,
 ) {
     val connection: StateFlow<SocketState> = socket.state
 
-    private val _cameraReady = MutableStateFlow(false)
-    val cameraReady: StateFlow<Boolean> = _cameraReady.asStateFlow()
+    /** True once CAMERA + HEADSET_CAMERA + RECORD_AUDIO are all granted (in-VR). */
+    private val _mediaReady = MutableStateFlow(false)
+    val mediaReady: StateFlow<Boolean> = _mediaReady.asStateFlow()
 
     private val _snapshotInFlight = MutableStateFlow(false)
     val snapshotInFlight: StateFlow<Boolean> = _snapshotInFlight.asStateFlow()
 
-    /** Set by the activity; invoked (on first 📷 tap) to request camera perms in-VR. */
+    /** Gemini Live duplex session active (mic + JPEG out, TTS back). */
+    val liveActive: StateFlow<Boolean> = liveSocket?.active ?: MutableStateFlow(false).asStateFlow()
+
+    /** Set by the activity; invoked to request camera+mic perms in-VR on first use. */
     var onRequestCameraPermission: (() -> Unit)? = null
 
     private val _channels = MutableStateFlow<List<ChannelInfo>>(emptyList())
@@ -86,7 +92,10 @@ class SessionState(
         }
     }
 
-    fun stop() = socket.stop()
+    fun stop() {
+        liveSocket?.stop()
+        socket.stop()
+    }
 
     fun selectChannel(id: String) {
         _selectedChannel.value = id
@@ -115,8 +124,29 @@ class SessionState(
         _confirmation.value = null
     }
 
-    fun setCameraReady(ready: Boolean) {
-        _cameraReady.value = ready
+    fun setMediaReady(ready: Boolean) {
+        _mediaReady.value = ready
+    }
+
+    /** Toggle the always-on Gemini Live session (voice + camera → agent orchestration). */
+    fun toggleLive() {
+        val live = liveSocket
+        if (live == null) {
+            systemLine("Live not available in this build.")
+            return
+        }
+        if (!_mediaReady.value) {
+            systemLine("Approve camera + microphone in the headset, then tap 🎙 again.")
+            onRequestCameraPermission?.invoke()
+            return
+        }
+        if (live.active.value) {
+            live.stop()
+            systemLine("Live session ended.")
+        } else {
+            live.start()
+            systemLine("🎙 Live — talk to Forge; the guild is watching and listening.")
+        }
     }
 
     /**
@@ -131,7 +161,7 @@ class SessionState(
             systemLine("Camera not available in this build.")
             return
         }
-        if (!_cameraReady.value) {
+        if (!_mediaReady.value) {
             systemLine("Approve the camera prompt in the headset, then tap 📷 again.")
             onRequestCameraPermission?.invoke()
             return
@@ -145,7 +175,7 @@ class SessionState(
                 up.upload(socket.sessionId, still.jpeg, still.width, still.height, note)
                     .onFailure { systemLine("Snapshot upload failed: ${it.message}") }
             } catch (e: SecurityException) {
-                _cameraReady.value = false
+                _mediaReady.value = false
                 systemLine("Camera permission needed — approve it in the headset.")
             } catch (e: Exception) {
                 systemLine("Snapshot capture failed: ${e.message}")

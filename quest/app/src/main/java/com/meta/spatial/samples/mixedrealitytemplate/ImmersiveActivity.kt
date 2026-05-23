@@ -10,7 +10,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.ui.platform.ComposeView
 import androidx.core.net.toUri
+import com.meta.spatial.samples.mixedrealitytemplate.forge.audio.MicCapture
+import com.meta.spatial.samples.mixedrealitytemplate.forge.audio.SpeakerPlayer
 import com.meta.spatial.samples.mixedrealitytemplate.forge.camera.PassthroughCapture
+import com.meta.spatial.samples.mixedrealitytemplate.forge.net.LiveSocket
 import com.meta.spatial.samples.mixedrealitytemplate.forge.net.OrchestratorSocket
 import com.meta.spatial.samples.mixedrealitytemplate.forge.net.SnapshotUploader
 import com.meta.spatial.samples.mixedrealitytemplate.forge.state.SessionState
@@ -92,27 +95,31 @@ class ImmersiveActivity : AppSystemActivity() {
         OrchestratorSocket(baseUrl = BuildConfig.ORCHESTRATOR_URL, scope = activityScope)
     val capture = PassthroughCapture(applicationContext)
     val uploader = SnapshotUploader(BuildConfig.ORCHESTRATOR_SNAPSHOT_URL)
-    session = SessionState(socket, activityScope, capture, uploader)
-    // Request camera perms LAZILY (on first 📷 tap), never at boot — requesting
-    // at boot backgrounds the immersive activity to show the system dialog and
-    // kills passthrough. The callback runs the legacy request from the activity.
-    session.onRequestCameraPermission = {
-      runOnUiThread {
-        requestPermissions(
-            arrayOf(android.Manifest.permission.CAMERA, PassthroughCapture.HEADSET_CAMERA),
-            REQ_CAMERA,
+    val liveSocket =
+        LiveSocket(
+            liveUrl = BuildConfig.ORCHESTRATOR_LIVE_URL,
+            sessionId = socket.sessionId, // same session so chat + live attach together
+            scope = activityScope,
+            mic = MicCapture(),
+            speaker = SpeakerPlayer(),
+            capture = capture,
+            enableVideo = true,
         )
-      }
+    session = SessionState(socket, activityScope, capture, uploader, liveSocket)
+    // Request camera+mic perms LAZILY (on first 📷/🎙 tap), never at boot —
+    // requesting at boot backgrounds the immersive activity to show the system
+    // dialog and kills passthrough. The callback runs the legacy request.
+    session.onRequestCameraPermission = {
+      runOnUiThread { requestPermissions(MEDIA_PERMS, REQ_CAMERA) }
     }
-    session.setCameraReady(hasCameraPerms())
+    session.setMediaReady(hasMediaPerms())
     session.start()
 
     loadGLXF()
   }
 
-  private fun hasCameraPerms(): Boolean =
-      checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED &&
-          checkSelfPermission(PassthroughCapture.HEADSET_CAMERA) == PackageManager.PERMISSION_GRANTED
+  private fun hasMediaPerms(): Boolean =
+      MEDIA_PERMS.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
 
   override fun onRequestPermissionsResult(
       requestCode: Int,
@@ -121,7 +128,7 @@ class ImmersiveActivity : AppSystemActivity() {
   ) {
     super.onRequestPermissionsResult(requestCode, permissions, grantResults)
     if (requestCode == REQ_CAMERA && ::session.isInitialized) {
-      session.setCameraReady(hasCameraPerms())
+      session.setMediaReady(hasMediaPerms())
     }
   }
 
@@ -256,5 +263,11 @@ class ImmersiveActivity : AppSystemActivity() {
 
   companion object {
     private const val REQ_CAMERA = 4201
+    private val MEDIA_PERMS =
+        arrayOf(
+            android.Manifest.permission.CAMERA,
+            PassthroughCapture.HEADSET_CAMERA,
+            android.Manifest.permission.RECORD_AUDIO,
+        )
   }
 }

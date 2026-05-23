@@ -46,6 +46,8 @@
        HEADSET_CAMERA is grantable only via the in-VR runtime dialog. -->
   <uses-permission android:name="android.permission.CAMERA" />
   <uses-permission android:name="horizonos.permission.HEADSET_CAMERA" />
+  <!-- Forge: mic for the Gemini Live duplex session (/v2/live). -->
+  <uses-permission android:name="android.permission.RECORD_AUDIO" />
   <uses-feature
     android:name="com.oculus.feature.RENDER_MODEL"
     android:required="false"
