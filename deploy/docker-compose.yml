@@ -1,0 +1,23 @@
+# Runs on the Azure VM (galois-cloud-vm-2). The CI deploy job copies this file
+# to ~/forge-deploy, writes a sibling .env from GitHub secrets, sets
+# ORCHESTRATOR_IMAGE to the freshly pushed tag, then runs `docker compose up -d`.
+services:
+  orchestrator:
+    image: ${ORCHESTRATOR_IMAGE:-ghcr.io/hernantech/googleiohackathon-orchestrator:latest}
+    container_name: forge-orchestrator
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
