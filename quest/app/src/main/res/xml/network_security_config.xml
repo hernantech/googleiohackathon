@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleartext (ws://, http://) is permitted ONLY for the deployed Forge
+  orchestrator VM, which is currently un-TLS'd. Everything else stays
+  cleartext-blocked (Android default). Replace/remove when the orchestrator
+  is fronted with TLS.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">20.230.188.247</domain>
+    </domain-config>
+</network-security-config>
