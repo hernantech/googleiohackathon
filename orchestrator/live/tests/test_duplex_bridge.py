@@ -275,6 +275,98 @@ def test_live_frame_prefix_parsing():
     assert kind == MediaKind.AUDIO and payload == b""
 
 
+# ── PRODUCTION WIRING: main._make_live_graph_hooks closes the voice loop ──────
+def test_main_live_hooks_voice_answer_back_through_session(monkeypatch):
+    """The *actual* /v2/live transcript path in main.py (not a reimplementation):
+    drive ``main._make_live_graph_hooks`` through a LiveDuplexBridge with a fake
+    session and assert the closed loop — GraphEngine.run ran on the per-session
+    ctx, ForgeState.liveSpeakerScript was produced, and that synthesized answer
+    was spoken BACK into the same Live session (``send_text``)."""
+
+    async def run():
+        import orchestrator.main as main_mod
+
+        # Isolate the process-wide session registry so the test is hermetic.
+        monkeypatch.setattr(main_mod, "_sessions", {})
+
+        # Wrap GraphEngine.run to prove main's hook actually invoked the engine.
+        run_calls: list[str] = []
+        real_run = GraphEngine.run
+
+        def spy_run(self, state, transcript):
+            run_calls.append(transcript)
+            return real_run(self, state, transcript)
+
+        monkeypatch.setattr(GraphEngine, "run", spy_run)
+
+        session_id = "live-main-hooks"
+        on_transcript, on_tool_call = main_mod._make_live_graph_hooks(session_id)
+
+        # An @-mention forces the guild path so a real headline is synthesized.
+        question = "what's wrong with @power on the J3 rail"
+        session = FakeLiveSession(scripted=[
+            LiveEvent(transcript=question, transcript_final=True),
+        ])
+        client = FakeClientTransport()
+        bridge = LiveDuplexBridge(
+            session,
+            audio_out=client.send_bytes,
+            on_transcript=on_transcript,
+            on_tool_call=on_tool_call,
+        )
+
+        await bridge.receive_loop()
+
+        # 1) main's hook drove GraphEngine.run exactly once, with the transcript.
+        assert run_calls == [question], run_calls
+        # 2) the per-session ctx that main owns produced a LiveSpeaker script.
+        ctx = main_mod._sessions[session_id]
+        assert ctx.state.latestTranscriptFinal == question
+        assert ctx.state.liveSpeakerScript, "expected a synthesized spoken answer"
+        # 3) THAT synthesized answer was spoken back INTO the same Live session.
+        assert session.sent_text == [ctx.state.liveSpeakerScript], session.sent_text
+
+    asyncio.run(run())
+
+
+def test_main_live_tool_call_injects_function_response(monkeypatch):
+    """The *actual* main.py tool-call path: a Live ``summon_guild`` function-call
+    drives the guild via ``main._make_live_graph_hooks`` and the merged consensus
+    headline is injected BACK as a function-response (Live voices the result)."""
+
+    async def run():
+        import orchestrator.main as main_mod
+
+        monkeypatch.setattr(main_mod, "_sessions", {})
+
+        session_id = "live-main-tc"
+        _on_transcript, on_tool_call = main_mod._make_live_graph_hooks(session_id)
+
+        session = FakeLiveSession(scripted=[
+            LiveEvent(tool_call="summon_guild",
+                      tool_args={"topic": "@power J3 rail droop"},
+                      tool_call_id="call-main-1"),
+        ])
+        client = FakeClientTransport()
+        bridge = LiveDuplexBridge(
+            session, audio_out=client.send_bytes, on_tool_call=on_tool_call
+        )
+
+        await bridge.receive_loop()
+
+        # The merged consensus was injected back as a function-response.
+        assert len(session.injected_responses) == 1, session.injected_responses
+        call_id, payload = session.injected_responses[0]
+        assert call_id == "call-main-1"
+        assert payload["tool"] == "summon_guild"
+        assert payload["headline"], "expected a merged consensus headline"
+        # And main's per-session ctx actually ran the guild deliberation.
+        ctx = main_mod._sessions[session_id]
+        assert ctx.state.mergedOpinion is not None
+
+    asyncio.run(run())
+
+
 # ── never fail-stop: a hook that raises does not kill the loop ────────────────
 def test_hook_exception_does_not_kill_loop():
     async def run():

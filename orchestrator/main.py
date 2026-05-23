@@ -32,7 +32,7 @@ from orchestrator.graph.engine import GraphEngine
 from orchestrator.graph.state import ForgeState
 from orchestrator.knowledge import KnowledgeAdapter
 from orchestrator.proto.events import ConfirmationResponse, new_ulid
-from orchestrator.seams import build_graph_deps, stub_snapshot_model_call
+from orchestrator.seams import build_graph_deps, build_snapshot_model_call
 from orchestrator.snapshot.endpoint import handle_snapshot
 from orchestrator.storage.frame_store import InMemoryFrameStore
 
@@ -45,6 +45,8 @@ HEARTBEAT_S = 20
 bus = ChatBus()
 knowledge = KnowledgeAdapter()  # bundled bq79616 demo profile unless BOARD_PROFILE set
 deps = build_graph_deps(knowledge)
+# Real Gemini vision when keyed, stub otherwise (07 §2.4) — used by /v2/snapshot.
+snapshot_model_call = build_snapshot_model_call()
 frame_store = InMemoryFrameStore()
 
 
@@ -411,7 +413,7 @@ async def snapshot(request: Request) -> JSONResponse:
         height=height,
         note=note,
         knowledge=knowledge,
-        model_call=stub_snapshot_model_call,
+        model_call=snapshot_model_call,
         store=frame_store,
         bus=None,
     )

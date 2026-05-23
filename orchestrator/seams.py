@@ -68,6 +68,25 @@ def stub_snapshot_model_call(jpeg_bytes: bytes, context: str, model_name: str) -
     )
 
 
+def build_snapshot_model_call():
+    """Select the snapshot (📷) vision model_call: real Gemini vision when
+    GEMINI_API_KEY is set and google-genai is importable, else the stub.
+
+    Mirrors build_graph_deps' real-vs-stub selection so /v2/snapshot uses the
+    same model wiring as chat/live instead of always returning the stub vision
+    string. Zero-config boot (no key) still falls back to the stub (07 §2.4)."""
+    log = logging.getLogger("forge.seams")
+    if os.getenv("GEMINI_API_KEY"):
+        try:
+            from orchestrator.genai_seams import real_snapshot_model_call
+
+            log.info("real snapshot vision model_call active (gemini vision)")
+            return real_snapshot_model_call
+        except Exception as e:  # noqa: BLE001  google-genai missing or import error
+            log.warning("real snapshot model_call unavailable (%s); using stub", e)
+    return stub_snapshot_model_call
+
+
 def build_graph_deps(knowledge: KnowledgeAdapter) -> GraphDeps:
     """Assemble GraphDeps. Uses real Gemini/Antigravity seams when GEMINI_API_KEY
     is set and google-genai is importable; otherwise stubs (zero-config boot,
