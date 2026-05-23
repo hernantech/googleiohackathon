@@ -63,6 +63,11 @@ def _genai():
     return _client
 
 
+#: Cap on tool-calling rounds per SME turn (retrieve -> reason -> retrieve).
+#: Keeps latency bounded; the SME must conclude within this many lookups.
+SME_MAX_TOOL_ROUNDS = int(os.getenv("GEMINI_SME_MAX_TOOL_ROUNDS", "5"))
+
+
 def _flash_json(prompt: str) -> dict:
     """One Flash call constrained to JSON; returns the parsed object."""
     r = _genai().models.generate_content(
@@ -70,7 +75,31 @@ def _flash_json(prompt: str) -> dict:
         contents=prompt,
         config={"response_mime_type": "application/json"},
     )
-    return json.loads(r.text)
+    return _loads(r.text)
+
+
+def _loads(text: str | None) -> dict:
+    """Robust JSON parse: tolerate ```json fences / surrounding prose, else {}.
+
+    The forced-JSON path returns clean JSON, but the tool-loop's final call may
+    occasionally wrap it; never raise on a stray fence (01 §7 never-fail-stop)."""
+    if not text:
+        return {}
+    s = text.strip()
+    try:
+        return json.loads(s)
+    except Exception:  # noqa: BLE001
+        # strip a leading/trailing fence and retry on the largest {...} span
+        if s.startswith("```"):
+            s = s.split("```", 2)[-2] if s.count("```") >= 2 else s.strip("`")
+            s = s[s.find("{"):] if "{" in s else s
+        lo, hi = s.find("{"), s.rfind("}")
+        if 0 <= lo < hi:
+            try:
+                return json.loads(s[lo : hi + 1])
+            except Exception:  # noqa: BLE001
+                return {}
+        return {}
 
 
 def _interaction_text(it: object) -> str:
@@ -173,42 +202,207 @@ def _wrap_action(pa: object, claim: str, knowledge: KnowledgeAdapter | None) -> 
         documentedLimitRef=ref)]
 
 
+# ── SME knowledge tools (bound to the per-session KnowledgeAdapter) ──────────
+#
+# The SME PULLS information instead of answering one-shot: we expose the three
+# read-only KnowledgeAdapter lookups (05 §3) to gemini-3.5-flash as
+# function-calling tools, run a bounded retrieve->reason->retrieve loop, then
+# force a JSON SmeResponse. We declare the schemas explicitly (rather than
+# google-genai's automatic-function-calling on raw callables) because:
+#   * AFC cannot be combined with response_mime_type=application/json — the
+#     final answer MUST be forced JSON (the SmeResponse contract);
+#   * a manual loop lets us cap rounds AND capture the exact tool calls made
+#     (for the audit trail / smoke report);
+#   * it binds cleanly to the per-session adapter via a closure.
+# The model never invents a limit: get_documented_limit returns the cited value
+# and the orchestrator attaches the citation in _wrap_action (03 §3.3.6).
+
+_TOOL_SCHEMAS = [
+    {
+        "name": "lookup_datasheet",
+        "description": (
+            "Retrieve datasheet passages for a board part, matched to a query. "
+            "Use when you need a part's behavior, electrical spec, or power-up "
+            "requirement (e.g. BQ79616 wake/VIO, ESP32 UART/IO levels). Returns "
+            "page-cited passages. part may be a part number (BQ79616), a "
+            "datasheet slug (bq79616), or a board ref (U2)."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "part": {"type": "STRING", "description": "part number, datasheet slug, or board ref"},
+                "query": {"type": "STRING", "description": "what you want to know"},
+            },
+            "required": ["part", "query"],
+        },
+    },
+    {
+        "name": "lookup_board_doc",
+        "description": (
+            "Search this board's documentation and structured profile (parts, "
+            "rails, nets, test points, preconditions, bring-up procedures). Use "
+            "for board-level facts: which rail powers what, net/test-point names, "
+            "the documented bring-up order."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "query": {"type": "STRING", "description": "board-level question"},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "get_documented_limit",
+        "description": (
+            "Return the deterministic, cited documented limit (max voltage / "
+            "current) for a net, rail, or part. ALWAYS use this before proposing "
+            "any concrete setpoint — never invent a voltage or current. "
+            "kind is one of: net, rail, part."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "target": {"type": "STRING", "description": "net id (J3), rail id (3V3), or part (U2/BQ79616)"},
+                "kind": {"type": "STRING", "enum": ["net", "rail", "part"]},
+            },
+            "required": ["target", "kind"],
+        },
+    },
+]
+
+
+def _dispatch_tool(name: str, args: dict, knowledge: KnowledgeAdapter) -> dict:
+    """Execute a declared tool against the bound adapter; return a JSON-able dict.
+    Read-only — nothing here actuates hardware (BK-10)."""
+    if name == "lookup_datasheet":
+        res = knowledge.lookup_datasheet(
+            str(args.get("part", "")), str(args.get("query", "")),
+        )
+        return res.model_dump()
+    if name == "lookup_board_doc":
+        res = knowledge.lookup_board_doc(str(args.get("query", "")))
+        return res.model_dump()
+    if name == "get_documented_limit":
+        res = knowledge.get_documented_limit(
+            str(args.get("target", "")), str(args.get("kind", "")),
+        )
+        return res.model_dump()
+    return {"error": f"unknown tool {name!r}"}
+
+
+def _run_sme_tool_loop(
+    system: str, brief: str, siblings: list[str], knowledge: KnowledgeAdapter | None,
+) -> tuple[dict, list[dict]]:
+    """Bounded function-calling loop on gemini-3.5-flash, returning the parsed
+    final SmeResponse dict and the list of tool calls made (for audit/report).
+
+    Round structure: generate_content with the tool declarations; if the model
+    emits functionCall parts, execute them against the per-session adapter,
+    append the functionResponse turn, and loop (capped at SME_MAX_TOOL_ROUNDS).
+    Once the model stops calling tools (or the cap is hit) we make one final
+    forced-JSON call to extract the SmeResponse — keeping the structured-output
+    contract that AFC-with-JSON cannot satisfy in a single call."""
+    from google.genai import types  # optional [live] dep
+
+    final_instructions = (
+        "You are out of tool calls. Conclude NOW with what you have retrieved — "
+        "do NOT say you still need to look something up. Reply with ONE JSON object: "
+        '{"confidence": <0-1>, "claim": "<one-sentence answer>", '
+        '"rationale": "<2-3 sentences; CITE the specific datasheet page / board-doc '
+        'section / documented limit you retrieved>", '
+        '"proposedAction": null OR {"tool": "set_psu|probe_net|serial_send|flash_mcu|inspect_closeup", '
+        '"args": {"target":"<net>","voltage_v":<n>,...}, '
+        '"instruction": "<imperative step for the operator>", "risk": "LOW|MEDIUM|HIGH"}}. '
+        "Use proposedAction only when a concrete operator step is warranted; else null. "
+        "Do NOT invent any voltage/current setpoint — only cite values you obtained "
+        "from get_documented_limit."
+    )
+    base = (
+        f"=== Guild brief ===\n{brief}\n\n"
+        f"Other SMEs consulted in parallel: {siblings or 'none'}\n\n"
+        "You have tools to PULL board knowledge: lookup_datasheet, "
+        "lookup_board_doc, get_documented_limit. Call them as needed to ground "
+        "your answer BEFORE concluding; you may call several in sequence. When you "
+        "have enough, stop calling tools and you will be asked for the final JSON."
+    )
+
+    client = _genai()
+    tools = [types.Tool(function_declarations=_TOOL_SCHEMAS)]
+    cfg = types.GenerateContentConfig(
+        system_instruction=system,
+        tools=tools,
+        # we drive the loop ourselves; disable the SDK's automatic execution so
+        # we can capture each call and bind it to the session adapter.
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+        tool_config=types.ToolConfig(
+            function_calling_config=types.FunctionCallingConfig(mode="AUTO")
+        ),
+    )
+
+    contents: list = [types.Content(role="user", parts=[types.Part(text=base)])]
+    tool_calls: list[dict] = []
+
+    for _ in range(max(1, SME_MAX_TOOL_ROUNDS)):
+        r = client.models.generate_content(
+            model=FLASH_MODEL, contents=contents, config=cfg,
+        )
+        calls = list(getattr(r, "function_calls", None) or [])
+        if not calls:
+            break  # model is ready to conclude
+
+        # echo the model's tool-call turn, then answer each call.
+        cand = (getattr(r, "candidates", None) or [None])[0]
+        model_content = getattr(cand, "content", None) if cand else None
+        if model_content is not None:
+            contents.append(model_content)
+
+        resp_parts = []
+        for fc in calls:
+            args = dict(fc.args or {})
+            knowledge_for_call = knowledge or KnowledgeAdapter()
+            result = _dispatch_tool(fc.name, args, knowledge_for_call)
+            tool_calls.append({"name": fc.name, "args": args, "result": result})
+            resp_parts.append(
+                types.Part.from_function_response(name=fc.name, response={"result": result})
+            )
+        contents.append(types.Content(role="user", parts=resp_parts))
+
+    # final forced-JSON answer (no tools on this call so JSON mode is allowed).
+    final = client.models.generate_content(
+        model=FLASH_MODEL,
+        contents=contents + [types.Content(role="user", parts=[types.Part(text=final_instructions)])],
+        config=types.GenerateContentConfig(
+            system_instruction=system,
+            response_mime_type="application/json",
+        ),
+    )
+    return _loads(getattr(final, "text", None)), tool_calls
+
+
 def real_summon_one(sme_id: str, summon: SummonGuild, knowledge: KnowledgeAdapter | None = None) -> SmeResponse:
-    """Summon one SME. Runs as a fast gemini-3.5-flash call (not the ~70s-cold
-    Antigravity sandbox; see ROADMAP). The persona is the system instruction and
-    the orchestrator-assembled `summon.briefing` (question + board facts + limits
-    + snapshot, see GraphEngine._build_briefing) is the grounded input — this is
-    what gives the SME *proper context*. We build the SmeResponse envelope
-    ourselves and attach the documented-limit citation to any proposed step."""
+    """Summon one SME as a bounded tool-calling agent on gemini-3.5-flash (not
+    the ~70s-cold Antigravity sandbox; see ROADMAP). The persona is the system
+    instruction and the orchestrator-assembled `summon.briefing` (question +
+    board facts + limits + snapshot, see GraphEngine._build_briefing) is the
+    grounded starting context. The SME may PULL more via three read-only tools
+    (lookup_datasheet / lookup_board_doc / get_documented_limit) bound to the
+    per-session KnowledgeAdapter, reasoning over what it retrieves before
+    concluding with a forced-JSON SmeResponse. We build the SmeResponse envelope
+    ourselves and the orchestrator attaches the documented-limit citation to any
+    proposed step — the model never invents a setpoint (03 §3.3.6)."""
     try:
         role = SME_ROLES.get(sme_id, "a specialist SME")
         siblings = [s for s in summon.smes if s != sme_id]
         system = (
             f"You are {sme_id}, {role}. You are on Forge's guild advising a HUMAN "
             "operator at an electronics bench. Forge actuates nothing — you only "
-            "recommend steps the operator performs by hand. Be terse, cite the "
-            "board doc/datasheet, and stay strictly in your lane."
+            "recommend steps the operator performs by hand. Be terse, ground every "
+            "claim in the board doc/datasheet (use your tools to retrieve them), and "
+            "stay strictly in your lane."
         )
         brief = summon.briefing or f"Topic: {summon.topic}"
-        instructions = (
-            "Reply with ONE JSON object: "
-            '{"confidence": <0-1>, "claim": "<one-sentence answer>", '
-            '"rationale": "<2-3 sentences; cite the board doc/datasheet>", '
-            '"proposedAction": null OR {"tool": "set_psu|probe_net|serial_send|flash_mcu|inspect_closeup", '
-            '"args": {"target":"<net>","voltage_v":<n>,...}, '
-            '"instruction": "<imperative step for the operator>", "risk": "LOW|MEDIUM|HIGH"}}. '
-            "Use proposedAction only when a concrete operator step is warranted; else null."
-        )
-        prompt = (
-            f"{system}\n\n=== Guild brief ===\n{brief}\n\n"
-            f"Other SMEs consulted in parallel: {siblings or 'none'}\n\n{instructions}"
-        )
-        r = _genai().models.generate_content(
-            model=FLASH_MODEL,
-            contents=prompt,
-            config={"response_mime_type": "application/json"},
-        )
-        d = json.loads(r.text)
+        d, _tool_calls = _run_sme_tool_loop(system, brief, siblings, knowledge)
         conf = min(max(float(d.get("confidence", 0.5)), 0.0), 1.0)
         claim = str(d.get("claim", "")).strip() or f"{sme_id}: (no claim)"
         return SmeResponse(
