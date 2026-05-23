@@ -1,0 +1,27 @@
+[project]
+name = "forge-observer"
+version = "0.1.0"
+description = "Forge Observer — decoupled, read-only manager dashboard tapping the orchestrator chat bus"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "websockets>=13",
+]
+
+[project.optional-dependencies]
+# google-genai is only needed when GEMINI_API_KEY is set; tests stub the call.
+live = ["google-genai>=2.6"]
+dev = ["pytest>=8.0", "httpx>=0.27"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["observer*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-q"

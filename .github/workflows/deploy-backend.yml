@@ -4,6 +4,13 @@ name: Deploy orchestrator to Azure VM
 # aarch64), pushes to GHCR, then SSH-deploys to the VM. Build runs on any
 # branch push touching the backend so PRs are validated; deploy only runs on
 # main or a manual dispatch.
+#
+# The observer (manager dashboard) is a SEPARATE, decoupled image with its own
+# build job. Per-job path gating (via the `changes` job below) keeps the two
+# decoupled: an observer-only edit does NOT rebuild the orchestrator, and an
+# orchestrator-only edit does NOT rebuild the observer. Crucially, the deploy of
+# the (critical) orchestrator is NOT coupled to the (non-critical) observer
+# build — see the `deploy` job guard.
 on:
   push:
     branches: ["**"]
@@ -12,6 +19,7 @@ on:
       - "bench_knowledge/**"
       - "pyproject.toml"
       - "Dockerfile"
+      - "observer/**"
       - "deploy/**"
       - ".github/workflows/deploy-backend.yml"
   workflow_dispatch:
@@ -24,7 +32,37 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
+  # ── Per-path change detection so each image only rebuilds when its own inputs
+  #    change. A workflow_dispatch (or a shared-infra edit) rebuilds both.
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      orchestrator: ${{ steps.filter.outputs.orchestrator }}
+      observer: ${{ steps.filter.outputs.observer }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            orchestrator:
+              - "orchestrator/**"
+              - "bench_knowledge/**"
+              - "pyproject.toml"
+              - "Dockerfile"
+              - "deploy/**"
+              - ".github/workflows/deploy-backend.yml"
+            observer:
+              - "observer/**"
+              - "deploy/**"
+              - ".github/workflows/deploy-backend.yml"
+
   build-and-push:
+    needs: changes
+    # Build the orchestrator when its inputs changed, or on a manual dispatch.
+    if: ${{ needs.changes.outputs.orchestrator == 'true' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -60,11 +98,62 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  deploy:
-    needs: build-and-push
+  # Decoupled observer image — its OWN build context (observer/) and OWN image
+  # name. Runs in parallel with the orchestrator build; a failure here does NOT
+  # block the orchestrator deploy (see the `deploy` job).
+  build-and-push-observer:
+    needs: changes
+    if: ${{ needs.changes.outputs.observer == 'true' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
-    # Only deploy from main or when manually dispatched — not on every PR branch push.
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute lowercase image name
+        id: meta
+        run: echo "image=${REGISTRY}/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')-observer" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push observer (linux/arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./observer
+          platforms: linux/arm64
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}:latest
+            ${{ steps.meta.outputs.image }}:${{ github.sha }}
+          cache-from: type=gha,scope=observer
+          cache-to: type=gha,mode=max,scope=observer
+
+  deploy:
+    needs: [build-and-push, build-and-push-observer]
+    runs-on: ubuntu-latest
+    # Deploy from main or a manual dispatch. CRITICAL: this must run whenever the
+    # orchestrator image is available, even if the (non-critical) observer build
+    # failed or was skipped. GitHub skips a job if ANY `needs` dep is not
+    # successful, so we use `always()` and gate on the orchestrator result
+    # explicitly: deploy proceeds iff build-and-push succeeded (or was skipped
+    # because nothing orchestrator-side changed — then we still deploy current
+    # images to honor a deploy/** or compose-only change).
+    if: |
+      always() &&
+      (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') &&
+      needs.build-and-push.result != 'failure' &&
+      needs.build-and-push.result != 'cancelled'
     permissions:
       contents: read
       packages: read
@@ -96,24 +185,72 @@ jobs:
           LANGGRAPH_CHECKPOINTER=memory
           EOF
 
+      # Resolve the image tags to deploy. The orchestrator is the critical path:
+      # if its build job ran, use the fresh :sha tag; if it was skipped (no
+      # orchestrator change), fall back to :latest already on the VM. The
+      # observer is OPTIONAL — only target/bring it up if its build SUCCEEDED;
+      # otherwise we deploy the orchestrator alone and leave any existing
+      # observer container untouched.
       - name: Deploy (pull + up + health check)
         env:
-          IMAGE: ${{ needs.build-and-push.outputs.image }}:${{ github.sha }}
+          ORCH_RESULT: ${{ needs.build-and-push.result }}
+          ORCH_IMAGE_BASE: ${{ needs.build-and-push.outputs.image }}
+          OBS_RESULT: ${{ needs.build-and-push-observer.result }}
+          OBS_IMAGE_BASE: ${{ needs.build-and-push-observer.outputs.image }}
+          SHA: ${{ github.sha }}
+          DEFAULT_ORCH: ghcr.io/hernantech/googleiohackathon-orchestrator
+          DEFAULT_OBS: ghcr.io/hernantech/googleiohackathon-observer
         run: |
+          set -euo pipefail
+          # Orchestrator image: fresh :sha when built, else :latest (skipped build).
+          if [ "${ORCH_RESULT}" = "success" ] && [ -n "${ORCH_IMAGE_BASE}" ]; then
+            ORCHESTRATOR_IMAGE="${ORCH_IMAGE_BASE}:${SHA}"
+          else
+            ORCHESTRATOR_IMAGE="${DEFAULT_ORCH}:latest"
+          fi
+          # Observer image: only set a deployable tag if its build SUCCEEDED.
+          if [ "${OBS_RESULT}" = "success" ] && [ -n "${OBS_IMAGE_BASE}" ]; then
+            OBSERVER_IMAGE="${OBS_IMAGE_BASE}:${SHA}"
+            DEPLOY_OBSERVER=1
+          else
+            # Build skipped or failed → keep whatever is on the VM (or :latest).
+            OBSERVER_IMAGE="${DEFAULT_OBS}:latest"
+            DEPLOY_OBSERVER=0
+            echo "::notice::observer build result='${OBS_RESULT}' → deploying orchestrator only; observer container left as-is"
+          fi
+
           ssh -i ~/.ssh/deploy_key "${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}" \
-            "GHCR_USER='${{ github.actor }}' GHCR_TOKEN='${{ secrets.GITHUB_TOKEN }}' ORCHESTRATOR_IMAGE='${IMAGE}' bash -s" <<'REMOTE'
+            "GHCR_USER='${{ github.actor }}' GHCR_TOKEN='${{ secrets.GITHUB_TOKEN }}' ORCHESTRATOR_IMAGE='${ORCHESTRATOR_IMAGE}' OBSERVER_IMAGE='${OBSERVER_IMAGE}' DEPLOY_OBSERVER='${DEPLOY_OBSERVER}' bash -s" <<'REMOTE'
           set -euo pipefail
           cd ~/forge-deploy
           echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
-          export ORCHESTRATOR_IMAGE
-          echo "Deploying $ORCHESTRATOR_IMAGE"
-          docker compose pull
-          docker compose up -d
+          export ORCHESTRATOR_IMAGE OBSERVER_IMAGE
+          echo "Deploying orchestrator=$ORCHESTRATOR_IMAGE observer=$OBSERVER_IMAGE (deploy_observer=$DEPLOY_OBSERVER)"
+          if [ "$DEPLOY_OBSERVER" = "1" ]; then
+            # Bring up the whole stack (orchestrator + observer).
+            docker compose pull
+            docker compose up -d
+          else
+            # Critical path only: pull + (re)start the orchestrator, leave the
+            # observer container exactly as it is so a broken observer build can
+            # never take down or stale the orchestrator deploy.
+            docker compose pull orchestrator
+            docker compose up -d orchestrator
+          fi
           docker image prune -f
-          # wait for health
+          # wait for orchestrator health (the observer tolerates the bus being
+          # briefly absent and reconnects, so we gate the deploy on orchestrator).
           for i in $(seq 1 20); do
-            if curl -fsS http://localhost:8080/healthz; then echo; echo "healthy"; exit 0; fi
+            if curl -fsS http://localhost:8080/healthz; then echo; echo "orchestrator healthy"; break; fi
             sleep 3
+            if [ "$i" = "20" ]; then echo "orchestrator health check failed"; docker compose logs --tail=50 orchestrator; exit 1; fi
           done
-          echo "health check failed"; docker compose logs --tail=50; exit 1
+          # best-effort observer health (non-fatal) only when we deployed it.
+          if [ "$DEPLOY_OBSERVER" = "1" ]; then
+            for i in $(seq 1 10); do
+              if curl -fsS http://localhost:8090/healthz; then echo; echo "observer healthy"; break; fi
+              sleep 3
+            done
+          fi
+          exit 0
           REMOTE
