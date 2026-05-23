@@ -19,6 +19,7 @@ import os
 import pathlib
 
 from orchestrator.knowledge.board_profile import BoardProfile, load_board_profile
+from orchestrator.knowledge.bom import BomResult, lookup_bom as _lookup_bom
 from orchestrator.knowledge.limits import DocumentedLimit, LimitResolver
 from orchestrator.knowledge.lookups import (
     BoardDocResult,
@@ -73,6 +74,10 @@ class KnowledgeAdapter:
     def get_documented_limit(self, target: str, kind: str) -> DocumentedLimit:
         return self._resolver.get(target, kind)
 
+    # ── BOM lookup ──
+    def lookup_bom(self, query: str, max_results: int = 10) -> BomResult:
+        return _lookup_bom(query, max_results=max_results)
+
     @property
     def datastore_hits(self) -> int:
         """Datasheet-table reads behind get_documented_limit (BK-4)."""
@@ -86,5 +91,6 @@ __all__ = [
     "DocumentedLimit",
     "DatasheetResult",
     "BoardDocResult",
+    "BomResult",
     "EXAMPLE_PROFILE_PATH",
 ]
