@@ -8,7 +8,10 @@ on:
   push:
     branches: ["**"]
     paths:
-      - "forge_v2/**"
+      - "orchestrator/**"
+      - "bench_knowledge/**"
+      - "pyproject.toml"
+      - "Dockerfile"
       - "deploy/**"
       - ".github/workflows/deploy-backend.yml"
   workflow_dispatch:
@@ -48,7 +51,7 @@ jobs:
       - name: Build and push (linux/arm64)
         uses: docker/build-push-action@v6
         with:
-          context: ./forge_v2
+          context: .
           platforms: linux/arm64
           push: true
           tags: |

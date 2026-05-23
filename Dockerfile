@@ -1,6 +1,6 @@
-# Forge orchestrator. Built multi-arch in CI; the target VM is linux/arm64
-# (Azure Ampere). python:3.12-slim is multi-arch so this builds natively on
-# either platform.
+# Forge orchestrator (ROADMAP Phase 2). Built linux/arm64 in CI for the Azure
+# Ampere VM. Build context is the repo root; package is `orchestrator` with the
+# bundled board profile under bench_knowledge/.
 FROM python:3.12-slim AS base
 
 ENV PYTHONUNBUFFERED=1 \
@@ -10,18 +10,18 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# curl is used by the container HEALTHCHECK below.
+# curl backs the container HEALTHCHECK.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Project metadata + source, then install. (setuptools needs the package
-# directory present at build time, so source is copied before `pip install`.)
+# Project metadata + source (setuptools needs the package present at build),
+# then install. bench_knowledge/ ships the default bq79616 demo board profile.
 COPY pyproject.toml ./
 COPY orchestrator ./orchestrator
+COPY bench_knowledge ./bench_knowledge
 RUN pip install .
 
-# Drop privileges.
 RUN useradd --create-home --uid 10001 forge
 USER forge
 

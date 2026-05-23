@@ -1,0 +1,16 @@
+.git/
+.github/
+deploy/
+forge_ios/
+forge_v2/
+specs/
+testdata/
+tests_integration/
+client/
+**/tests/
+**/__pycache__/
+**/*.pyc
+.venv/
+.env
+*.env
+*.md
