@@ -60,7 +60,7 @@ struct ConfigStore {
         // Strip any /v2/* path suffix so legacy "ws://host:port/v2/chat" values
         // are normalised back to "ws://host:port" before we append our own paths.
         let strippedBase: String = {
-            var s = rawBase
+            let s = rawBase
             for suffix in ["/v2/chat", "/v2/live", "/v2/snapshot", "/v2"] {
                 if s.hasSuffix(suffix) { return String(s.dropLast(suffix.count)) }
             }

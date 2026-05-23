@@ -70,9 +70,13 @@ actor LiveSocket {
             Log.net.info("live socket connecting to \(self.url.absoluteString, privacy: .public)")
 
             let session = URLSession(configuration: .default)
+            // Auth: offer the bare token as a second subprotocol entry so the
+            // server's _auth_subprotocol matcher (exact equality against
+            // ALLOWED_DEV_TOKENS) can find it.  "forge.live.v2" stays first as
+            // the application-level protocol identifier (specs/00 §8).
             let wsTask = session.webSocketTask(
                 with: liveURL(),
-                protocols: ["forge.live.v2", "bearer.\(authToken)"]
+                protocols: ["forge.live.v2", authToken]
             )
             task = wsTask
             wsTask.resume()

@@ -111,10 +111,14 @@ actor OrchestratorSocket {
             Log.net.info("connecting to \(self.url.absoluteString, privacy: .public)")
 
             // v2 auth rides the WS subprotocol, not an Authorization header (specs/00 §8, 04 §1).
+            // Offer the bare token as a second subprotocol entry so the server's
+            // _auth_subprotocol matcher (exact equality against ALLOWED_DEV_TOKENS)
+            // can find it.  "forge.chat.v2" stays first as the application-level
+            // protocol identifier (specs/00 §8).
             let session = URLSession(configuration: .default)
             let wsTask = session.webSocketTask(
                 with: connectURL(replayFrom: lastCheckpointId),
-                protocols: ["forge.chat.v2", "bearer.\(authToken)"]
+                protocols: ["forge.chat.v2", authToken]
             )
             task = wsTask
             wsTask.resume()

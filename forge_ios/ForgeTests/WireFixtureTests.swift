@@ -14,38 +14,39 @@ final class WireFixtureTests: XCTestCase {
 
     // MARK: - Helpers
 
-    private func fixture(named name: String) -> Data? {
-        // Look in the test bundle first, then fall back to a sibling path
-        // relative to the source file (useful when running `swift test`).
-        if let url = Bundle(for: WireFixtureTests.self).url(forResource: name, withExtension: "json") {
-            return try? Data(contentsOf: url)
+    private func fixture(named name: String) throws -> Data {
+        // Look in the test bundle's "wire" subdirectory first (fixtures are
+        // copied there by the ForgeTests Copy Files build phase).
+        if let url = Bundle(for: WireFixtureTests.self)
+            .url(forResource: name, withExtension: "json", subdirectory: "wire") {
+            return try Data(contentsOf: url)
         }
-        // Relative fallback: <repo>/testdata/wire/<name>.json
+        // Relative fallback: <repo>/testdata/wire/<name>.json (swift test / local runs).
         let srcDir = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()   // ForgeTests/
             .deletingLastPathComponent()   // forge_ios/
             .deletingLastPathComponent()   // repo root
             .appendingPathComponent("testdata/wire/\(name).json")
-        return try? Data(contentsOf: srcDir)
+        if FileManager.default.fileExists(atPath: srcDir.path) {
+            return try Data(contentsOf: srcDir)
+        }
+        throw XCTSkip("Fixture '\(name).json' not found in bundle or testdata/wire/")
     }
 
-    private func decodeEvent(named name: String) throws -> AgentEvent? {
-        guard let data = fixture(named: name) else {
-            // Fixture not in bundle — skip gracefully (don't fail CI).
-            return nil
-        }
+    private func decodeEvent(named name: String) throws -> AgentEvent {
+        let data = try fixture(named: name)
         return try AgentEvent.decode(from: data)
     }
 
-    private func decodeCard<T: Decodable>(named name: String, as type: T.Type) throws -> T? {
-        guard let data = fixture(named: name) else { return nil }
+    private func decodeCard<T: Decodable>(named name: String, as type: T.Type) throws -> T {
+        let data = try fixture(named: name)
         return try JSONDecoder().decode(type, from: data)
     }
 
     // MARK: - AgentEvent fixtures
 
     func testHelloFixture() throws {
-        guard let event = try decodeEvent(named: "Hello") else { return }
+        let event = try decodeEvent(named: "Hello")
         guard case let .hello(client, sessionId, protocolVersion) = event else {
             return XCTFail("expected .hello, got \(event)")
         }
@@ -55,7 +56,7 @@ final class WireFixtureTests: XCTestCase {
     }
 
     func testGoodbyeFixture() throws {
-        guard let event = try decodeEvent(named: "Goodbye") else { return }
+        let event = try decodeEvent(named: "Goodbye")
         guard case let .goodbye(reason) = event else {
             return XCTFail("expected .goodbye")
         }
@@ -63,7 +64,7 @@ final class WireFixtureTests: XCTestCase {
     }
 
     func testTranscriptFixture() throws {
-        guard let event = try decodeEvent(named: "Transcript") else { return }
+        let event = try decodeEvent(named: "Transcript")
         guard case let .transcript(text, partial, ts, speaker, smeId) = event else {
             return XCTFail("expected .transcript")
         }
@@ -75,7 +76,7 @@ final class WireFixtureTests: XCTestCase {
     }
 
     func testToolCallFixture() throws {
-        guard let event = try decodeEvent(named: "ToolCall") else { return }
+        let event = try decodeEvent(named: "ToolCall")
         guard case let .toolCall(name, argsJson, callId) = event else {
             return XCTFail("expected .toolCall")
         }
@@ -85,7 +86,7 @@ final class WireFixtureTests: XCTestCase {
     }
 
     func testToolResultFixture() throws {
-        guard let event = try decodeEvent(named: "ToolResult") else { return }
+        let event = try decodeEvent(named: "ToolResult")
         guard case let .toolResult(callId, resultJson, deferred) = event else {
             return XCTFail("expected .toolResult")
         }
@@ -95,7 +96,7 @@ final class WireFixtureTests: XCTestCase {
     }
 
     func testConfirmationRequestFixture() throws {
-        guard let event = try decodeEvent(named: "ConfirmationRequest") else { return }
+        let event = try decodeEvent(named: "ConfirmationRequest")
         guard case let .confirmationRequest(callId, summary, risk, invokerSmeId, actionCardJson) = event else {
             return XCTFail("expected .confirmationRequest")
         }
@@ -113,7 +114,7 @@ final class WireFixtureTests: XCTestCase {
     }
 
     func testConfirmationResponseFixture() throws {
-        guard let event = try decodeEvent(named: "ConfirmationResponse") else { return }
+        let event = try decodeEvent(named: "ConfirmationResponse")
         guard case let .confirmationResponse(callId, approved, approverChannel) = event else {
             return XCTFail("expected .confirmationResponse")
         }
@@ -123,7 +124,7 @@ final class WireFixtureTests: XCTestCase {
     }
 
     func testAudioChunkFixture() throws {
-        guard let event = try decodeEvent(named: "AudioChunk") else { return }
+        let event = try decodeEvent(named: "AudioChunk")
         guard case let .audioChunk(pcmBase64, ts) = event else {
             return XCTFail("expected .audioChunk")
         }
@@ -132,7 +133,7 @@ final class WireFixtureTests: XCTestCase {
     }
 
     func testChatMessageFixture() throws {
-        guard let event = try decodeEvent(named: "ChatMessage") else { return }
+        let event = try decodeEvent(named: "ChatMessage")
         guard case let .chatMessage(msg) = event else {
             return XCTFail("expected .chatMessage")
         }
@@ -146,7 +147,7 @@ final class WireFixtureTests: XCTestCase {
     }
 
     func testSummonGuildFixture() throws {
-        guard let event = try decodeEvent(named: "SummonGuild") else { return }
+        let event = try decodeEvent(named: "SummonGuild")
         guard case let .summonGuild(sg) = event else {
             return XCTFail("expected .summonGuild")
         }
@@ -158,7 +159,7 @@ final class WireFixtureTests: XCTestCase {
     }
 
     func testSmeResponseFixture() throws {
-        guard let event = try decodeEvent(named: "SmeResponse") else { return }
+        let event = try decodeEvent(named: "SmeResponse")
         guard case let .smeResponse(sr) = event else {
             return XCTFail("expected .smeResponse")
         }
@@ -179,7 +180,7 @@ final class WireFixtureTests: XCTestCase {
     }
 
     func testDissentReportFixture() throws {
-        guard let event = try decodeEvent(named: "DissentReport") else { return }
+        let event = try decodeEvent(named: "DissentReport")
         guard case let .dissentReport(dr) = event else {
             return XCTFail("expected .dissentReport")
         }
@@ -193,7 +194,7 @@ final class WireFixtureTests: XCTestCase {
     }
 
     func testChannelUpdateFixture() throws {
-        guard let event = try decodeEvent(named: "ChannelUpdate") else { return }
+        let event = try decodeEvent(named: "ChannelUpdate")
         guard case let .channelUpdate(cu) = event else {
             return XCTFail("expected .channelUpdate")
         }
@@ -203,7 +204,7 @@ final class WireFixtureTests: XCTestCase {
     }
 
     func testSafetyInterruptFixture() throws {
-        guard let event = try decodeEvent(named: "SafetyInterrupt") else { return }
+        let event = try decodeEvent(named: "SafetyInterrupt")
         guard case let .safetyInterrupt(si) = event else {
             return XCTFail("expected .safetyInterrupt")
         }
@@ -216,7 +217,7 @@ final class WireFixtureTests: XCTestCase {
     }
 
     func testCheckpointMarkerFixture() throws {
-        guard let event = try decodeEvent(named: "CheckpointMarker") else { return }
+        let event = try decodeEvent(named: "CheckpointMarker")
         guard case let .checkpointMarker(cm) = event else {
             return XCTFail("expected .checkpointMarker")
         }
@@ -228,7 +229,7 @@ final class WireFixtureTests: XCTestCase {
     // MARK: - Card-type fixtures (not AgentEvent members)
 
     func testActionCardFixture() throws {
-        guard let data = fixture(named: "ActionCard") else { return }
+        let data = try fixture(named: "ActionCard")
         let card = try JSONDecoder().decode(ActionCard.self, from: data)
         XCTAssertEqual(card.affirmLabel, "I did it")
         XCTAssertEqual(card.denyLabel, "Skip")
@@ -238,7 +239,7 @@ final class WireFixtureTests: XCTestCase {
     }
 
     func testFrameRefFixture() throws {
-        guard let data = fixture(named: "FrameRef") else { return }
+        let data = try fixture(named: "FrameRef")
         let ref = try JSONDecoder().decode(FrameRef.self, from: data)
         XCTAssertEqual(ref.width, 1920)
         XCTAssertEqual(ref.height, 1080)
@@ -249,7 +250,7 @@ final class WireFixtureTests: XCTestCase {
 
     /// WP-11: SnapshotAnalysis round-trips; embeds a valid FrameRef; cites defaults to [].
     func testSnapshotAnalysisFixture() throws {
-        guard let data = fixture(named: "SnapshotAnalysis") else { return }
+        let data = try fixture(named: "SnapshotAnalysis")
         let sa = try JSONDecoder().decode(SnapshotAnalysis.self, from: data)
         XCTAssertEqual(sa.jobId, "01HJOB")
         XCTAssertEqual(sa.model, "gemini-3-pro")

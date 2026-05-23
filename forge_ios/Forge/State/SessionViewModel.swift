@@ -175,8 +175,7 @@ final class SessionViewModel {
         }
 
         // Voice transcripts → command registry.
-        let t4 = Task { [weak self] in
-            guard let self else { return }
+        let t4 = Task {
             for await transcript in await voiceIntentActor.transcripts {
                 await voiceCmdReg.feed(transcript)
             }

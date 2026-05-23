@@ -46,7 +46,9 @@ actor CaptureSession {
 
     func start() async throws {
         guard !running else { return }
-        try await AVCaptureDevice.requestAccess(for: .video)
+        guard await AVCaptureDevice.requestAccess(for: .video) else {
+            throw CaptureSessionError.cameraAccessDenied
+        }
         try configureSession()
         session.startRunning()
         running = true
@@ -57,8 +59,8 @@ actor CaptureSession {
         guard running else { return }
         session.stopRunning()
         running = false
+        h264Encoder.drainAndInvalidate()
         videoChunkCont.finish()
-        h264Encoder.invalidate()
         Log.session.info("CaptureSession stopped")
     }
 
@@ -135,10 +137,9 @@ actor CaptureSession {
     }
 
     private func handleVideoSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
-        // Encode the raw frame to H.264 and forward to the live socket stream.
-        if let encoded = h264Encoder.encode(sampleBuffer) {
-            videoChunkCont.yield(encoded)
-        }
+        // Encode the raw frame to H.264; the encoder's output handler fires
+        // asynchronously and pushes Annex-B data directly into the stream.
+        h264Encoder.encode(sampleBuffer, into: videoChunkCont)
     }
 
     private func resolvePhotoCapture(_ data: Data?) {
@@ -150,6 +151,7 @@ actor CaptureSession {
 // MARK: - CaptureSessionError
 
 enum CaptureSessionError: Error {
+    case cameraAccessDenied
     case deviceUnavailable
     case outputUnavailable
 }
@@ -185,40 +187,51 @@ private final class PhotoDelegate: NSObject, AVCapturePhotoCaptureDelegate, @unc
 //
 // Wraps VideoToolbox VTCompressionSession to produce Annex-B H.264 NAL units
 // suitable for streaming to Gemini Live (specs/00 §4.1: H.264 always-on).
+//
+// Design notes:
+//  • Uses the per-frame outputHandler overload so encoded frames are delivered
+//    asynchronously on VideoToolbox's internal thread — no synchronous poll.
+//  • On keyframes, SPS/PPS parameter sets are extracted from the format
+//    description and emitted as Annex-B NALUs before the keyframe slice so
+//    downstream H.264 decoders can initialise without out-of-band signalling.
+//  • drainAndInvalidate() flushes pending frames via
+//    VTCompressionSessionCompleteFrames before tearing down the session.
 
 private final class H264Encoder: @unchecked Sendable {
 
     private var session: VTCompressionSession?
-    private var outputBuffer: Data?
-    private let lock = NSLock()
 
     init() { setupSession() }
 
-    func encode(_ sampleBuffer: CMSampleBuffer) -> Data? {
+    /// Encode one raw frame; the output handler fires asynchronously and pushes
+    /// Annex-B data directly into `continuation`.
+    func encode(_ sampleBuffer: CMSampleBuffer,
+                into continuation: AsyncStream<Data>.Continuation) {
         guard let session,
-              let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return nil }
+              let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-        var flags = VTEncodeInfoFlags()
 
-        lock.lock()
-        outputBuffer = nil
-        lock.unlock()
-
-        // Use the callback-based encode path (outputHandler not provided;
-        // results arrive in the session-level output callback set up in setupSession).
-        VTCompressionSessionEncodeFrame(session, imageBuffer: imageBuffer,
-                                        presentationTimeStamp: pts,
-                                        duration: .invalid, frameProperties: nil,
-                                        sourceFrameRefcon: nil, infoFlagsOut: &flags)
-
-        // The callback is synchronous for low-latency sessions; collect result.
-        lock.lock()
-        defer { lock.unlock() }
-        return outputBuffer
+        VTCompressionSessionEncodeFrame(
+            session,
+            imageBuffer: imageBuffer,
+            presentationTimeStamp: pts,
+            duration: .invalid,
+            frameProperties: nil,
+            infoFlagsOut: nil
+        ) { status, _, encodedBuffer in
+            guard status == noErr, let encodedBuffer else { return }
+            if let data = H264Encoder.annexBData(from: encodedBuffer) {
+                continuation.yield(data)
+            }
+        }
     }
 
-    func invalidate() {
-        if let s = session { VTCompressionSessionInvalidate(s) }
+    /// Flush pending frames then invalidate the session.
+    func drainAndInvalidate() {
+        if let s = session {
+            VTCompressionSessionCompleteFrames(s, untilPresentationTimeStamp: .invalid)
+            VTCompressionSessionInvalidate(s)
+        }
         session = nil
     }
 
@@ -235,13 +248,8 @@ private final class H264Encoder: @unchecked Sendable {
             encoderSpecification: nil,
             imageBufferAttributes: nil,
             compressedDataAllocator: nil,
-            outputCallback: { refcon, _, status, _, sampleBuffer in
-                guard let refcon, status == noErr,
-                      let sampleBuffer else { return }
-                let enc = Unmanaged<H264Encoder>.fromOpaque(refcon).takeUnretainedValue()
-                enc.collectOutput(sampleBuffer)
-            },
-            refcon: Unmanaged.passUnretained(self).toOpaque(),
+            outputCallback: nil,
+            refcon: nil,
             compressionSessionOut: &s
         )
         guard status == noErr, let s else { return }
@@ -257,16 +265,52 @@ private final class H264Encoder: @unchecked Sendable {
         session = s
     }
 
-    private func collectOutput(_ sampleBuffer: CMSampleBuffer) {
-        guard let block = CMSampleBufferGetDataBuffer(sampleBuffer) else { return }
+    // MARK: - Annex-B conversion
+
+    /// Convert a VT-encoded CMSampleBuffer to Annex-B byte stream.
+    /// For keyframes, SPS/PPS parameter sets are prepended so downstream
+    /// decoders can initialise without out-of-band configuration.
+    private static func annexBData(from sampleBuffer: CMSampleBuffer) -> Data? {
+        guard let block = CMSampleBufferGetDataBuffer(sampleBuffer) else { return nil }
         var totalLength = 0
         var dataPointer: UnsafeMutablePointer<CChar>?
         CMBlockBufferGetDataPointer(block, atOffset: 0, lengthAtOffsetOut: nil,
                                     totalLengthOut: &totalLength, dataPointerOut: &dataPointer)
-        guard let dataPointer, totalLength > 0 else { return }
+        guard let dataPointer, totalLength > 0 else { return nil }
+
+        var data = Data(capacity: totalLength + 128)
+
+        // Prepend SPS/PPS on keyframes so a decoder can initialise.
+        let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false)
+        let isKeyframe: Bool = {
+            guard let attachments,
+                  let first = (attachments as NSArray).firstObject as? NSDictionary else { return false }
+            let notSync = first[kCMSampleAttachmentKey_NotSync as NSString] as? Bool ?? false
+            return !notSync
+        }()
+
+        if isKeyframe, let fmtDesc = CMSampleBufferGetFormatDescription(sampleBuffer) {
+            var paramCount = 0
+            CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
+                fmtDesc, parameterSetIndex: 0,
+                parameterSetPointerOut: nil, parameterSetSizeOut: nil,
+                parameterSetCountOut: &paramCount, nalUnitHeaderLengthOut: nil)
+
+            for i in 0 ..< paramCount {
+                var paramPtr: UnsafePointer<UInt8>?
+                var paramSize = 0
+                CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
+                    fmtDesc, parameterSetIndex: i,
+                    parameterSetPointerOut: &paramPtr, parameterSetSizeOut: &paramSize,
+                    parameterSetCountOut: nil, nalUnitHeaderLengthOut: nil)
+                if let paramPtr, paramSize > 0 {
+                    data.append(contentsOf: [0x00, 0x00, 0x00, 0x01])  // Annex-B start code
+                    data.append(Data(bytes: paramPtr, count: paramSize))
+                }
+            }
+        }
 
         // Convert AVCC length-prefixed NALUs to Annex-B start codes (0x00 00 00 01).
-        var data = Data(capacity: totalLength)
         var offset = 0
         while offset < totalLength {
             guard offset + 4 <= totalLength else { break }
@@ -280,8 +324,6 @@ private final class H264Encoder: @unchecked Sendable {
             offset += Int(naluLength)
         }
 
-        lock.lock()
-        outputBuffer = data
-        lock.unlock()
+        return data.isEmpty ? nil : data
     }
 }
