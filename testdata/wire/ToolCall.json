@@ -1,0 +1,6 @@
+{
+  "argsJson": "{\"topic\":\"comm-timeout\"}",
+  "callId": "01HCALL",
+  "kind": "ToolCall",
+  "name": "summon_guild"
+}

@@ -1,0 +1,15 @@
+{
+  "authorId": "@power",
+  "authorKind": "sme",
+  "body": "Rail looks fine; the stack isn't applied.",
+  "bodyContentType": "text/markdown",
+  "channelId": "#power",
+  "kind": "ChatMessage",
+  "mentions": [
+    "@signal"
+  ],
+  "messageId": "01HMSG",
+  "replyToId": null,
+  "streaming": false,
+  "ts": 1716500000000000000
+}

@@ -1,0 +1,22 @@
+{
+  "analysis": "Only the VIO header is connected; the cell-stack lead at J3 is unplugged.",
+  "cites": [
+    {
+      "kind": "datasheet",
+      "note": "\u00a77 power-up",
+      "uri": "gs://forge/bq79616.pdf"
+    }
+  ],
+  "frame": {
+    "height": 1080,
+    "kind": "FrameRef",
+    "sourceSeq": 1,
+    "ts": 1716500000000000000,
+    "uri": "gs://forge/frame-00412.jpg",
+    "width": 1920
+  },
+  "jobId": "01HJOB",
+  "kind": "SnapshotAnalysis",
+  "model": "gemini-3-pro",
+  "ts": 1716500000000000000
+}

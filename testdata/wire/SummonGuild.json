@@ -1,0 +1,14 @@
+{
+  "callId": "01HCALL",
+  "contextRefs": [
+    "gs://forge/frame-00412.jpg"
+  ],
+  "deadlineMs": 30000,
+  "kind": "SummonGuild",
+  "smes": [
+    "@firmware",
+    "@signal",
+    "@power"
+  ],
+  "topic": "bq79616-comm-timeout"
+}

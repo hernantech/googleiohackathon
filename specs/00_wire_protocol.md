@@ -2,7 +2,8 @@
 
 > Frozen vocabulary for every cross-process message in Forge.
 > Lineage: extends `forge_orchestrator/proto/events.py` and `forge_quest/proto/AgentProto.kt` from v1. New event types are additive — every v1 event still exists and still carries the same fields.
-> Cross-refs: `01_langgraph_state_machine.md` (consumers), `04_chat_bus_protocol.md` (client surface), `05_bench_daemon_api.md` (RPC subset).
+> Cross-refs: `01_langgraph_state_machine.md` (consumers), `04_chat_bus_protocol.md` (client surface), `05_board_knowledge_api.md` (knowledge-lookup + operator-step contract).
+> Model: Forge advises a human operator. No process actuates hardware — "actions" are operator instructions and read-only knowledge lookups. There is no bench daemon. Two media paths, both produced on-device from one camera session: an **always-on H.264+audio** stream to Gemini Live, and an **on-demand hi-res JPEG snapshot** (one `POST /v2/snapshot` per 📷 tap) sent to a stronger model. The orchestrator never decodes or re-encodes video (§4).
 
 ---
 
@@ -11,36 +12,33 @@
 ```
                 ┌───────────────────────┐
                 │   Phone / Quest UI    │      Discord-style chat client
-                │   (Kotlin / Compose)  │
+                │   (Kotlin / Compose)  │      camera+mic capture; speaker out
                 └─────────┬─────────────┘
-                          │ (A) ChatBus WS — JSON only — see 04
-                          │ (B) Live WS    — bidi audio + video — Gemini Live framing
+                          │ (A) ChatBus WS  — JSON only — see 04
+                          │ (B) Live WS     — always-on H.264 video + audio — Gemini Live framing
+                          │ (F) HTTP POST /v2/snapshot — one hi-res JPEG per 📷 tap — see §4
+                          │     (device emits both encodings; orchestrator never transcodes)
                           ▼
                 ┌───────────────────────┐
                 │   Orchestrator        │      LangGraph; one graph instance per session
-                │   (Python 3.12)       │
-                └──┬───────┬────────┬───┘
-                   │       │        │
-                   │       │        │ (C) Managed-Agents REST/SSE — see Spike 1/4
-                   │       │        ▼
-                   │       │   ┌──────────────────────────┐
-                   │       │   │  SME Sandbox × N         │   one env per SME persona
-                   │       │   │  (Antigravity preview)   │
-                   │       │   └──────────────────────────┘
+                │   (Python 3.12)       │      Bridge passes H.264 to Live; SnapshotAnalyzer
+                └──┬───────┬────────────┘      handles /v2/snapshot
                    │       │
-                   │       │ (D) BenchDaemon JSON-RPC over WS — see 05
+                   │       │ (C) Managed-Agents REST/SSE — see Spike 1/4
                    │       ▼
                    │   ┌──────────────────────────┐
-                   │   │  Bench Daemon            │   local Linux box at the bench
-                   │   │  (PSU, scope, MCU, …)    │
-                   │   └──────────────────────────┘
+                   │   │  SME Sandbox × N         │   one env per SME persona
+                   │   │  (Antigravity preview)   │   SMEs propose operator steps +
+                   │   └──────────────────────────┘   request knowledge lookups
                    │
                    │ (E) Gemini Live WS — Google's bidi protocol — opaque to us
                    ▼
               Gemini Live
 ```
 
-Channels A, D are defined here. B is defined by Google. C is defined by Google (we wrap with envelopes — see §6). E is Google's Live protocol verbatim.
+The human at the bench performs every physical step Forge recommends; no channel reaches an instrument. Knowledge lookups (board doc, datasheets, documented limits — `05`) are in-process via the KnowledgeAdapter, not a network channel.
+
+Channel A and the `/v2/snapshot` endpoint (F) are defined here. B is defined by Google (always-on H.264+audio to Live; §4). C is defined by Google (we wrap with envelopes — see §6). E is Google's Live protocol verbatim. (The former channel D — BenchDaemon JSON-RPC — is removed.)
 
 ---
 
@@ -98,7 +96,8 @@ class ConfirmationRequest(BaseModel):
 class ConfirmationResponse(BaseModel):
     kind: Literal["ConfirmationResponse"] = "ConfirmationResponse"
     callId: str
-    approved: bool
+    approved: bool                                 # for operator steps: True == "I did it",
+                                                   #   False == "skipped"
     approverChannel: Literal["voice", "chat"] = "voice"   # NEW
 
 class AudioChunk(BaseModel):
@@ -147,10 +146,22 @@ class EvidenceRef(BaseModel):
     note: str | None = None
 
 class ProposedAction(BaseModel):
-    tool: str                                      # bench-daemon method or other tool name
-    argsJson: str
+    """A unit of recommended work. Forge never executes hardware actions.
+    `actor` says who does it:
+      - "operator": a manual step the human performs at the bench (set PSU, probe,
+        solder, flash). Forge phrases it as an instruction and gates it (03).
+      - "guild": a read-only knowledge lookup the orchestrator/SME runs itself
+        (lookup_datasheet, lookup_board_doc, get_documented_limit — see 05).
+    The name `ProposedAction` is retained from v1 for contract stability."""
+    actor: Literal["operator", "guild"] = "operator"   # NEW
+    tool: str                                      # operator-step verb (e.g. "set_psu",
+                                                   #   "probe_net", "reflow_pin", "flash_mcu")
+                                                   #   or a knowledge-lookup tool name
+    argsJson: str                                  # structured params (target net, value, unit…)
     rationale: str
     risk: Literal["LOW", "MEDIUM", "HIGH"]
+    instruction: str | None = None                 # NEW; human-readable step text for the card
+    documentedLimitRef: str | None = None          # NEW; citation for the value (05 §4)
 
 class DissentReport(BaseModel):
     kind: Literal["DissentReport"] = "DissentReport"
@@ -175,14 +186,18 @@ class ChannelUpdate(BaseModel):
     ts: int
 
 class ActionCard(BaseModel):
-    """Renderable confirmation card; carried inside ConfirmationRequest.actionCardJson."""
+    """Renderable operator-instruction card; carried inside
+    ConfirmationRequest.actionCardJson. Tells the human what to do BY HAND and
+    collects 'I did it' / 'Skip'. (Name retained from v1 for contract stability.)"""
     kind: Literal["ActionCard"] = "ActionCard"
     title: str
-    bodyMarkdown: str
-    diffMarkdown: str | None = None                # before/after table for set_psu etc.
+    bodyMarkdown: str                              # the step, spelled out
+    diffMarkdown: str | None = None                # e.g. "PSU now: off  →  set: 30.0 V / 0.5 A"
     risk: Literal["LOW", "MEDIUM", "HIGH"]
-    affirmLabel: str = "Approve"
-    denyLabel: str = "Hold"
+    documentedLimit: str | None = None             # NEW; shown so the human can sanity-check
+                                                   #   the value against the board's own docs
+    affirmLabel: str = "I did it"                  # CHANGED (was "Approve")
+    denyLabel: str = "Skip"                        # CHANGED (was "Hold")
 
 class SafetyInterrupt(BaseModel):
     """@sentinel only. Pre-empts the voice channel — see 03 §5."""
@@ -275,6 +290,32 @@ sealed class AgentEvent {
 @Serializable enum class AuthorKind { USER, LIVE, SME, SYSTEM }
 @Serializable enum class BodyContentType { @SerialName("text/markdown") MARKDOWN, @SerialName("application/json") JSON, @SerialName("text/code") CODE }
 @Serializable enum class ApproverChannel { VOICE, CHAT }
+@Serializable enum class Actor { @SerialName("operator") OPERATOR, @SerialName("guild") GUILD }
+
+// Supporting types carried inside events (parity with Pydantic §2.1).
+@Serializable data class EvidenceRef(val kind: String, val uri: String, val note: String? = null)
+@Serializable data class ProposedAction(
+    val actor: Actor = Actor.OPERATOR,
+    val tool: String, val argsJson: String, val rationale: String, val risk: Risk,
+    val instruction: String? = null, val documentedLimitRef: String? = null
+)
+@Serializable data class DissentPair(
+    val a: String, val b: String, val aClaim: String, val bClaim: String, val crux: String
+)
+// Rendered inside ConfirmationRequest.actionCardJson — the operator instruction card.
+@Serializable data class ActionCard(
+    val title: String, val bodyMarkdown: String, val diffMarkdown: String? = null,
+    val risk: Risk, val documentedLimit: String? = null,
+    val affirmLabel: String = "I did it", val denyLabel: String = "Skip"
+)
+// The on-demand snapshot result (carried inside a ChatMessage application/json body).
+@Serializable data class FrameRef(
+    val uri: String, val width: Int, val height: Int, val ts: Long, val sourceSeq: Int
+)
+@Serializable data class SnapshotAnalysis(
+    val jobId: String, val frame: FrameRef, val model: String,
+    val analysis: String, val cites: List<EvidenceRef> = emptyList(), val ts: Long
+)
 ```
 
 ---
@@ -296,24 +337,65 @@ The `deferred` boolean in `ToolResult` exists in both branches so client rendere
 
 ---
 
-## 4. Binary frame format
+## 4. Media paths: always-on video + on-demand snapshot
 
-Identical to v1 (forge_orchestrator/IMPLEMENTATION.md §"Binary channel"). Reproduced for completeness so this spec is self-contained.
+There are **two media paths**, both produced on the device from **one camera session with two outputs** (iOS `AVCaptureSession` + `AVCaptureVideoDataOutput`/movie + `AVCapturePhotoOutput`; Android/Quest one `CameraDevice` + an encoder surface + an `ImageReader`). The orchestrator **never decodes or re-encodes** video.
+
+### 4.1 Always-on — H.264 video + audio → Gemini Live (channel B)
+
+Continuous, real-time, consumed by the (weaker) Live model. The `GeminiLiveBridge` passes the device's H.264 + audio straight through to Live; it does not derive frames from it. Continuous vision (including `@sentinel`'s hazard watch, `01 §4.1`) is whatever Live perceives. Mic capture 16 kHz mono; speaker out 24 kHz — Live-session settings, not a Forge binary format. This is the **only persistent media socket**, so reconnection has a single lifecycle (`08 §3.5`).
+
+### 4.2 On-demand — hi-res JPEG snapshot → stronger model (endpoint F)
+
+When the operator taps 📷 (or, later, an agent calls the same entrypoint), the client captures one **full-resolution** still from the photo output and uploads it:
+
+```
+POST /v2/snapshot?sessionId=<ulid>
+Content-Type: image/jpeg            ; body = the JPEG bytes
+                                    ; optional ?note=<url-encoded hint>
+→ 202 { "jobId": "<ulid>" }         ; analysis arrives async over the chat bus
+```
+
+The orchestrator's `SnapshotAnalyzer` stores the JPEG (FrameStore), runs `analyze_snapshot(image, recent_context)` against a stronger model (`GEMINI_SNAPSHOT_MODEL`, e.g. Gemini 3.x/4.x `generateContent`), and emits the result as a `SnapshotAnalysis` (below) that (a) posts to `#live-feed` as a `ChatMessage`, (b) sets `ForgeState.latestFrame`, and (c) is available as an `EvidenceRef(kind="frame")` to the next `summon_guild`. It is a one-shot request/response — no persistent socket, no transcode.
+
+```python
+class FrameRef(BaseModel):
+    kind: Literal["FrameRef"] = "FrameRef"
+    uri: str                                       # gs://… (FrameStore) or in-mem id
+    width: int
+    height: int
+    ts: int                                        # ns; capture ts on the device
+    sourceSeq: int                                 # monotonic snapshot index within the session
+
+class SnapshotAnalysis(BaseModel):
+    """Result of analyze_snapshot(). Carried inside a ChatMessage
+    (bodyContentType=application/json) AND sets state.latestFrame.
+    Not in the AgentEvent union — like ActionCard, it is a card payload."""
+    kind: Literal["SnapshotAnalysis"] = "SnapshotAnalysis"
+    jobId: str
+    frame: FrameRef                                # the hi-res snapshot
+    model: str                                     # e.g. "gemini-3-pro"
+    analysis: str                                  # markdown
+    cites: list[EvidenceRef] = Field(default_factory=list)   # datasheet/board-doc citations
+    ts: int
+```
+
+### 4.3 Internal frame byte format (FrameStore)
+
+The snapshot JPEG stored in `FrameStore` keeps the v1 binary header for tooling compatibility:
 
 | Offset | Size | Field |
 |---|---|---|
-| 0 | 4 | Magic ASCII: `FRAM` (jpeg) \| `AUDI` (pcm) \| `META` (json sidecar — NEW v2) |
-| 4 | 4 | Width uint32 LE (0 for AUDI/META) |
-| 8 | 4 | Height uint32 LE (0 for AUDI/META) |
+| 0 | 4 | Magic ASCII: `FRAM` (jpeg) \| `META` (json sidecar) |
+| 4 | 4 | Width uint32 LE (0 for META) |
+| 8 | 4 | Height uint32 LE (0 for META) |
 | 12 | 8 | Timestamp ns uint64 LE |
 | 20 | … | Payload |
 
-`META` payload is a UTF-8 JSON blob whose first key is `kind` — used by clients that want to send frame-aligned annotations (e.g. tap-to-zoom-here coordinates) without breaking JPEG framing.
+- `FRAM`: JPEG, quality ≥ 70 (snapshots are full-res; the client may downscale to ≤ 4096 px long edge before upload).
+- `META`: UTF-8 JSON, ≤ 8 KB — frame-aligned annotations (e.g. a tap/gaze-to-zoom coordinate the client sends as a `ChatMessage` `META` body, resolved against `FrameRef.sourceSeq`).
 
-Payload encodings:
-- `FRAM`: JPEG, quality ≥ 70, max dimension ≤ 1920 px.
-- `AUDI`: PCM 16-bit LE, mono, 16 kHz (mic → orchestrator) or 24 kHz (orchestrator → speaker — same as v1).
-- `META`: UTF-8 JSON, ≤ 8 KB.
+`AUDI` (raw PCM) is **removed**: audio rides inside the Live channel (B) in Google's framing; the orchestrator never re-frames it.
 
 ---
 
@@ -381,4 +463,29 @@ Either way, the orchestrator passes the verified `uid` to LangGraph state under 
 
 - Internal LangGraph state graph — never serialised to a client; replay uses checkpoint storage + the ChatMessage history.
 - SME-to-SME chat — modeled as orchestrator-mediated messages in `#dissent` / `#actions`; SMEs do not have a direct WS to each other.
-- Per-SME tool calls from inside the sandbox (file writes, web fetches, code exec) — those are internal to Managed Agents and never surface as `ToolCall` events. Only the orchestrator's user-visible tools (`summon_guild`, `bench.*`, `confirm`) become `ToolCall`s.
+- Per-SME tool calls from inside the sandbox (file writes, web fetches, code exec) — those are internal to Managed Agents and never surface as `ToolCall` events. Only the orchestrator's user-visible tools (`summon_guild`, `confirm_step`, `analyze_snapshot`, and knowledge lookups `lookup_datasheet` / `lookup_board_doc` / `get_documented_limit` — `05`) become `ToolCall`s. There are no hardware-actuation tools at all. (`analyze_snapshot` is normally triggered by the 📷 button via `POST /v2/snapshot`, but it is registered as a tool so an agent could call it autonomously later — out of scope for the hackathon.)
+
+---
+
+## 11. Test cases (component-level — the contract)
+
+These are the unit/contract tests that gate any change to this file. They run with no external services (pure (de)serialization). Run: `pytest orchestrator/proto/tests/`.
+
+**Design pattern under test:** the discriminated union + idempotent ULIDs + graceful, forward-compatible parsing.
+
+| ID | Test | Pass criterion |
+|---|---|---|
+| WP-1 | Round-trip every `AgentEvent` variant: `model_validate_json(e.model_dump_json()) == e` | exact equality for all 15 variants |
+| WP-2 | Discriminator dispatch: a JSON blob with `kind:"ChatMessage"` parses to `ChatMessage`, never another variant | type is exact |
+| WP-3 | Forward-compat: an event JSON with an unknown extra field parses without error (ignored) | no exception |
+| WP-4 | v1→v2 default-fill: a `Transcript` JSON lacking `speaker`/`smeId` parses with `speaker="user"`, `smeId=None` | defaults applied |
+| WP-5 | `ProposedAction.actor` defaults to `"operator"` when absent; `"guild"` lookups validate | both parse |
+| WP-6 | Kotlin↔Pydantic parity: a golden corpus of one JSON per variant (`testdata/wire/*.json`) parses cleanly in BOTH the Python and Kotlin (`AgentProto`) deserializers | both succeed; field values match the golden table |
+| WP-7 | `ActionCard` defaults: omitting `affirmLabel`/`denyLabel` yields `"I did it"` / `"Skip"` | defaults applied |
+| WP-8 | `FrameRef` validates with a `gs://` and an in-mem `mem:` URI; rejects empty `uri` | accept/accept/reject |
+| WP-9 | Protocol gate: a `Hello` without `protocolVersion` is rejected by the v2 validator (required field) | `ValidationError` |
+| WP-10 | No actuation surface: assert the tool-name registry exposed to clients contains none of `set_psu`/`flash_mcu` as *executable* tools — only as `ProposedAction.tool` step labels | registry assertion holds |
+| WP-11 | `SnapshotAnalysis` round-trips (Python + Kotlin via golden corpus); embeds a valid `FrameRef`; `cites` defaults to `[]` | parity + defaults |
+| WP-12 | `analyze_snapshot` is in the user-visible tool registry; the registry exposes **no** video-decode/transcode entrypoint (the snapshot path stores bytes, never decodes the H.264) | tool present; no transcode symbol |
+
+The golden corpus in WP-6 (now including `SnapshotAnalysis`) is the single source of truth for cross-language parity and is reused by the system-level contract test `08 §3.1`.

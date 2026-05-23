@@ -1,0 +1,39 @@
+{
+  "callId": "01HCALL",
+  "claim": "Missing cell stack; comm timeout is a symptom.",
+  "confidence": 0.92,
+  "dissentsWith": [
+    "@firmware"
+  ],
+  "evidence": [
+    {
+      "kind": "datasheet",
+      "note": "\u00a77 power-up",
+      "uri": "gs://forge/bq79616.pdf"
+    }
+  ],
+  "kind": "SmeResponse",
+  "proposedActions": [
+    {
+      "actor": "operator",
+      "argsJson": "{\"channel\":1,\"voltage_v\":30.0,\"current_limit_a\":0.5,\"target\":\"J3\"}",
+      "documentedLimitRef": "board_doc p.4 / board_profile.nets[J3]",
+      "instruction": "Set bench PSU CH1 to 30.0 V, 0.5 A limit, across the cell-sim ladder (J3).",
+      "rationale": "Apply the emulated cell stack so the AFE wakes.",
+      "risk": "HIGH",
+      "tool": "set_psu"
+    },
+    {
+      "actor": "guild",
+      "argsJson": "{\"part\":\"bq79616\",\"query\":\"power-up\"}",
+      "documentedLimitRef": null,
+      "instruction": null,
+      "rationale": "Confirm the wake sequence requires a cell stack.",
+      "risk": "LOW",
+      "tool": "lookup_datasheet"
+    }
+  ],
+  "rationale": "Only VIO is wired; per datasheet \u00a77 the AFE needs the stack to wake.",
+  "smeId": "@power",
+  "ts": 1716500000000000000
+}

@@ -1,0 +1,20 @@
+{
+  "axis": "root_cause",
+  "callId": "01HCALL",
+  "kind": "DissentReport",
+  "pairwise": [
+    {
+      "a": "@power",
+      "aClaim": "No stack \u2192 AFE never wakes.",
+      "b": "@firmware",
+      "bClaim": "Comm/baud init is wrong.",
+      "crux": "is the comm bus the root cause"
+    }
+  ],
+  "parties": [
+    "@power",
+    "@firmware"
+  ],
+  "summary": "Power vs comm bus.",
+  "ts": 1716500000000000000
+}
