@@ -74,11 +74,28 @@ def get_ctx(session_id: str, user_id: str | None = None) -> SessionCtx:
 
 def _drain_to_bus(state: ForgeState) -> None:
     """Publish + clear the graph's outbound events (ChatMessages, cards,
-    ConfirmationRequests, CheckpointMarkers) to all subscribed sessions."""
+    ConfirmationRequests, CheckpointMarkers) to all subscribed sessions.
+
+    IDEMPOTENT vs. streaming: any event already pushed to the per-session
+    incremental sink during the run (state.streamedEvents — the summon notice,
+    per-SME claims, per-tool-call activity) is skipped here so it is published
+    exactly once. Only the not-yet-streamed remainder (consensus card, dissent,
+    LiveSpeaker transcript, checkpoints) is drained at the end."""
     if state.outboundEvents:
-        events = list(state.outboundEvents)
+        streamed = state.streamedEvents
+        events = [e for e in state.outboundEvents if id(e) not in streamed]
         state.outboundEvents.clear()
-        bus.publish_many(events)
+        streamed.clear()
+        if events:
+            bus.publish_many(events)
+
+
+def _bus_sink(event: object) -> None:
+    """Per-run incremental publish sink handed to the graph (GraphDeps.emit via
+    engine.run's deps): fan a single deliberation event to the bus the moment it
+    is produced. Used by /v2/chat and /v2/live so SME deliberation streams live
+    instead of arriving as one batched dump at the end."""
+    bus.publish(event)
 
 
 def _auth_subprotocol(ws: WebSocket) -> tuple[bool, str | None]:
@@ -170,11 +187,14 @@ async def chat(ws: WebSocket) -> None:
             kind = data.get("kind")
 
             if kind == "ChatMessage":
-                ctx.engine.run(ctx.state, data.get("body", ""))
+                # Stream deliberation as it unfolds (summon notice → per-SME
+                # claims → tool-call activity) via the per-session bus sink; the
+                # final drain publishes only the not-yet-streamed remainder.
+                ctx.engine.run(ctx.state, data.get("body", ""), emit=_bus_sink)
                 _drain_to_bus(ctx.state)
             elif kind == "ConfirmationResponse":
                 resp = ConfirmationResponse(**{k: v for k, v in data.items() if k != "kind"})
-                ctx.engine.resume(ctx.state, resp)
+                ctx.engine.resume(ctx.state, resp, emit=_bus_sink)
                 bus.resolve_confirmation(resp.callId)
                 _drain_to_bus(ctx.state)
             elif kind == "Pong":
@@ -251,7 +271,10 @@ def _make_live_graph_hooks(session_id: str):
 
     async def on_transcript(transcript: str) -> str | None:
         # ARCHITECTURE §2/§4: a final Live transcript drives the main pipeline.
-        result = await asyncio.to_thread(ctx.engine.run, ctx.state, transcript)
+        # Stream deliberation to the bus AS IT HAPPENS (per-session sink); the
+        # final drain publishes only the not-yet-streamed remainder.
+        result = await asyncio.to_thread(
+            lambda: ctx.engine.run(ctx.state, transcript, emit=_bus_sink))
         _drain_to_bus(ctx.state)
         # Voice the LiveSpeaker line back through Live (the spoken summary).
         return ctx.state.liveSpeakerScript if result.status != "paused" else None
@@ -262,7 +285,7 @@ def _make_live_graph_hooks(session_id: str):
         transcript = str(args.get("topic") or args.get("text") or name)
 
         def _run() -> dict:
-            ctx.engine.run(ctx.state, transcript)
+            ctx.engine.run(ctx.state, transcript, emit=_bus_sink)
             merged = ctx.state.mergedOpinion
             return {
                 "tool": name,

@@ -9,6 +9,8 @@ confirmation the run returns `paused`; `resume()` applies the operator's answer.
 
 from __future__ import annotations
 
+import contextlib
+import inspect
 import json
 import re
 
@@ -43,6 +45,10 @@ class GraphEngine:
     def __init__(self, deps: GraphDeps):
         self.deps = deps
         self._gate_session = GateSession()
+        #: Active incremental sink for the in-flight run. None ⇒ fall back to
+        #: deps.emit (the default no-op). Set by run()/resume()'s `emit=` kwarg
+        #: and torn down in a finally so it never leaks across runs/sessions.
+        self._emit_sink = None
 
     # ───────────────────────── entry ticks ─────────────────────────
     def ingest_snapshot(self, state: ForgeState, snap: SnapshotAnalysis) -> None:
@@ -77,7 +83,17 @@ class GraphEngine:
             severity=severity, reason=reason, suggestedRecoverActions=recover, ts=now_ns()))
 
     # ───────────────────────── main pipeline ─────────────────────────
-    def run(self, state: ForgeState, transcript: str) -> RunResult:
+    def run(self, state: ForgeState, transcript: str, *, emit=None) -> RunResult:
+        """Run the main pipeline. `emit`, when given, is a per-run incremental
+        publish sink (callable taking one event): summon notice, per-SME claims
+        and per-tool-call activity stream to it AS THEY HAPPEN. Streamed events
+        are also recorded in state.streamedEvents so the caller's final drain is
+        idempotent. Defaults to GraphDeps.emit (a no-op) → unchanged for tests
+        that don't inject a sink."""
+        with self._streaming(emit):
+            return self._run(state, transcript)
+
+    def _run(self, state: ForgeState, transcript: str) -> RunResult:
         state.latestTranscriptFinal = transcript
         state.outboundEvents.append(CheckpointMarker(
             checkpointId=new_ulid(), graphNodeName="PerceptionGate", ts=now_ns()))
@@ -167,12 +183,37 @@ class GraphEngine:
         return decision
 
     def _parallel_summon(self, state: ForgeState) -> None:
-        """Fan out; per-SME timeout → confidence-0 placeholder, others continue (GR-5)."""
+        """Fan out; per-SME timeout → confidence-0 placeholder, others continue (GR-5).
+
+        Streams deliberation AS IT HAPPENS (not batched at the end): a summon
+        notice to #live-feed up front, then — per SME, the moment it completes —
+        its claim+rationale to #<sme>, plus a short #<sme> note for each knowledge
+        tool the SME called (so retrieval is visible). All via self._emit so the
+        chat bus sees them live while state.outboundEvents stays the full record."""
         summon = state.pendingSummon
         state.activeSmes = list(summon.smes)
+
+        # 1) summon notice → #live-feed, immediately (only on the first round so
+        #    cross-exam re-summons don't spam the feed).
+        if state.crossExamRound == 0:
+            roster = ", ".join(summon.smes)
+            self._emit(state, ChatMessage(
+                channelId="#live-feed", authorId="@forge", authorKind="system",
+                body=f"summoned {roster}", messageId=new_ulid(), ts=now_ns()))
+
         for sme in summon.smes:
+            # 3) surface each knowledge tool call to the SME's channel AS IT
+            #    happens. summon_one captures the calls in real_summon_one's loop;
+            #    we pass a per-SME emit so they stream rather than vanish. The
+            #    callback is opt-in: only wired when summon_one accepts `emit`.
+            def _on_tool_call(call: dict, _sme: str = sme) -> None:
+                self._emit(state, ChatMessage(
+                    channelId=_sme_channel(_sme), authorId=_sme, authorKind="sme",
+                    body=f"{_sme} → {_format_tool_call(call)}",
+                    messageId=new_ulid(), ts=now_ns()))
+
             try:
-                resp = self.deps.summon_one(sme, summon)
+                resp = self._summon_one(sme, summon, _on_tool_call)
             except Exception as e:  # noqa: BLE001 — timeout / cold-start
                 resp = SmeResponse(
                     smeId=sme, callId=summon.callId, confidence=0.0,
@@ -180,6 +221,28 @@ class GraphEngine:
             state.smeResponses[sme] = resp
             for action in resp.proposedActions:
                 state.invokerOf[id(action)] = sme
+
+            # 2) per-SME completion → claim+rationale to #<sme>, RIGHT AWAY (not
+            #    batched after every SME finishes).
+            self._emit(state, ChatMessage(
+                channelId=_sme_channel(sme), authorId=sme, authorKind="sme",
+                body=_format_claim(resp), messageId=new_ulid(), ts=now_ns()))
+
+    def _summon_one(self, sme: str, summon, on_tool_call) -> SmeResponse:
+        """Call deps.summon_one, threading a per-tool-call emit when the seam
+        supports it (real_summon_one does; stubs / test doubles need not). We
+        introspect the callable so the GraphDeps contract stays back-compatible:
+        a 2-arg summon_one keeps working unchanged."""
+        fn = self.deps.summon_one
+        try:
+            sig = inspect.signature(fn)
+            accepts_emit = "on_tool_call" in sig.parameters or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+        except (TypeError, ValueError):  # builtins / un-introspectable
+            accepts_emit = False
+        if accepts_emit:
+            return fn(sme, summon, on_tool_call=on_tool_call)
+        return fn(sme, summon)
 
     def _aggregate(self, state: ForgeState) -> None:
         """StreamingAggregator (01 §3.4): bounded queue, coalesce on overflow (GR-6)."""
@@ -254,8 +317,13 @@ class GraphEngine:
                 state.outboundEvents.append(req)
         return "paused" if state.pendingConfirmations else "go"
 
-    def resume(self, state: ForgeState, response: ConfirmationResponse) -> RunResult:
-        """HITL resume (GR-11/GR-12): apply 'I did it' / 'Skip'."""
+    def resume(self, state: ForgeState, response: ConfirmationResponse, *, emit=None) -> RunResult:
+        """HITL resume (GR-11/GR-12): apply 'I did it' / 'Skip'. `emit` mirrors
+        run(): a per-run incremental sink for any events resume produces."""
+        with self._streaming(emit):
+            return self._resume(state, response)
+
+    def _resume(self, state: ForgeState, response: ConfirmationResponse) -> RunResult:
         req = state.pendingConfirmations.pop(response.callId, None)
         if req is None:
             return RunResult("paused", state)
@@ -290,6 +358,35 @@ class GraphEngine:
             text=text, partial=False, ts=now_ns(), speaker="live"))
 
     # ───────────────────────── helpers ─────────────────────────
+    @contextlib.contextmanager
+    def _streaming(self, emit):
+        """Scope a per-run incremental sink. Restores the prior sink on exit so
+        a sink never leaks across runs even if the run raises."""
+        prev = self._emit_sink
+        if emit is not None:
+            self._emit_sink = emit
+        try:
+            yield
+        finally:
+            self._emit_sink = prev
+
+    def _emit(self, state: ForgeState, event: object) -> None:
+        """Stream one event NOW: append to state.outboundEvents (so the run's
+        full transcript is preserved + replayable) AND push it to the incremental
+        sink (GraphDeps.emit) so subscribers see deliberation as it unfolds.
+
+        Records id(event) in state.streamedEvents so the final drain
+        (main._drain_to_bus) skips it — streamed events are never re-published
+        (idempotent drain). The sink is never allowed to fail-stop the run
+        (01 §7): a raising sink is swallowed and logged into state.errors."""
+        state.outboundEvents.append(event)
+        state.streamedEvents.add(id(event))
+        sink = self._emit_sink if self._emit_sink is not None else self.deps.emit
+        try:
+            sink(event)
+        except Exception as e:  # noqa: BLE001 — a bad sink must not fail-stop
+            state.errors.append(f"emit: {e!r}")
+
     def _audit(self, state, action, invoker, decision) -> None:
         state.audit.append({
             "tool": action.tool, "invokerSmeId": invoker,
@@ -311,3 +408,27 @@ class GraphEngine:
 
 def action_invoker_default(action) -> str:
     return "@power"
+
+
+def _sme_channel(sme_id: str) -> str:
+    """`@power`/`power`/`#power` → `#power` (per-SME chat-bus channel, spec 04 §2)."""
+    return "#" + sme_id.lstrip("@#")
+
+
+def _format_tool_call(call: dict) -> str:
+    """One-line `tool(arg=val, …)` for a captured knowledge-tool call, e.g.
+    `lookup_datasheet(part=BQ79616, query=VIO)`. Defensive: a missing/odd shape
+    degrades to just the tool name."""
+    name = str(call.get("name") or call.get("tool") or "tool")
+    args = call.get("args")
+    if isinstance(args, dict) and args:
+        inner = ", ".join(f"{k}={v}" for k, v in args.items())
+        return f"{name}({inner})"
+    return f"{name}()"
+
+
+def _format_claim(resp: SmeResponse) -> str:
+    """The SME's streamed bubble: a confidence-tagged claim headline plus its
+    rationale underneath (markdown). Mirrors the SmeResponse card (04 §3)."""
+    head = f"**{resp.claim}** _(confidence {resp.confidence:.2f})_"
+    return f"{head}\n\n{resp.rationale}" if resp.rationale else head

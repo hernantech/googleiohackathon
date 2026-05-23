@@ -286,16 +286,19 @@ def test_main_live_hooks_voice_answer_back_through_session(monkeypatch):
     async def run():
         import orchestrator.main as main_mod
 
-        # Isolate the process-wide session registry so the test is hermetic.
+        # Isolate the process-wide session registry + chat bus so the test is
+        # hermetic (the bus now also receives streamed deliberation events;
+        # don't leak them into the shared replay buffer).
         monkeypatch.setattr(main_mod, "_sessions", {})
+        monkeypatch.setattr(main_mod, "bus", ChatBus())
 
         # Wrap GraphEngine.run to prove main's hook actually invoked the engine.
         run_calls: list[str] = []
         real_run = GraphEngine.run
 
-        def spy_run(self, state, transcript):
+        def spy_run(self, state, transcript, *, emit=None):
             run_calls.append(transcript)
-            return real_run(self, state, transcript)
+            return real_run(self, state, transcript, emit=emit)
 
         monkeypatch.setattr(GraphEngine, "run", spy_run)
 
@@ -338,6 +341,7 @@ def test_main_live_tool_call_injects_function_response(monkeypatch):
         import orchestrator.main as main_mod
 
         monkeypatch.setattr(main_mod, "_sessions", {})
+        monkeypatch.setattr(main_mod, "bus", ChatBus())
 
         session_id = "live-main-tc"
         _on_transcript, on_tool_call = main_mod._make_live_graph_hooks(session_id)
