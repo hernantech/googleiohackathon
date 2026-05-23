@@ -17,6 +17,8 @@ then orchestrator.managed_agents.read_sme_response(...) parses the SmeResponse.
 
 from __future__ import annotations
 
+import logging
+import os
 import re
 
 from orchestrator.graph.state import DissentResult, GraphDeps, RouteDecision
@@ -67,8 +69,19 @@ def stub_snapshot_model_call(jpeg_bytes: bytes, context: str, model_name: str) -
 
 
 def build_graph_deps(knowledge: KnowledgeAdapter) -> GraphDeps:
-    """Assemble GraphDeps with real safety/knowledge + (currently) stub model seams.
-    Phase 3 swaps the stub_* callables for google-genai / Antigravity wiring."""
+    """Assemble GraphDeps. Uses real Gemini/Antigravity seams when GEMINI_API_KEY
+    is set and google-genai is importable; otherwise stubs (zero-config boot,
+    07 §2.4). SafetyGate + KnowledgeAdapter are always real."""
+    log = logging.getLogger("forge.seams")
+    if os.getenv("GEMINI_API_KEY"):
+        try:
+            from orchestrator.genai_seams import build_real_deps
+
+            deps = build_real_deps(knowledge)
+            log.info("real model seams active (gemini-3.5-flash + antigravity)")
+            return deps
+        except Exception as e:  # noqa: BLE001  google-genai missing or import error
+            log.warning("real seams unavailable (%s); falling back to stubs", e)
     return GraphDeps(
         gate=SafetyGate(knowledge),
         knowledge=knowledge,

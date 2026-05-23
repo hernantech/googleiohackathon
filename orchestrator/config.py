@@ -38,14 +38,14 @@ class Settings:
         )
 
     def integration_status(self) -> dict[str, str]:
-        # Seams are stubbed regardless of keys until real SDK wiring lands.
+        # Real seams activate when GEMINI_API_KEY is set and google-genai is
+        # installed ([live] extra); see orchestrator.seams.build_graph_deps.
+        live = bool(self.gemini_api_key)
         return {
-            "gemini": "key-present (seams stubbed)" if self.gemini_api_key else "stub",
-            "managed_agents": "key-present (seams stubbed)"
-            if self.managed_agents_api_key
-            else "stub",
+            "gemini": "live (gemini-3.5-flash)" if live else "stub",
+            "smes": "live (gemini-3.5-flash)" if live else "stub",
             "board_profile": self.board_profile or "bundled-demo",
-            "model_seams": "stub",
+            "model_seams": "live" if live else "stub",
         }
 
 

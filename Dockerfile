@@ -20,7 +20,9 @@ RUN apt-get update \
 COPY pyproject.toml ./
 COPY orchestrator ./orchestrator
 COPY bench_knowledge ./bench_knowledge
-RUN pip install .
+# [live] pulls google-genai so the real gemini-3.5-flash seams activate when
+# GEMINI_API_KEY is set (ROADMAP Phase 3/4). Without a key it still boots stub.
+RUN pip install ".[live]"
 
 RUN useradd --create-home --uid 10001 forge
 USER forge
