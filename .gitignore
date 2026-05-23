@@ -1,0 +1,71 @@
+# ── Secrets & local config ───────────────────────────────
+.env
+.env.*
+*.env
+v2.env
+.forge/
+service-account*.json
+gcp-credentials*.json
+*-credentials.json
+google-application-credentials.json
+
+# ── Python (orchestrator, bench daemon) ──────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+build/
+dist/
+.eggs/
+.Python
+.venv/
+venv/
+env/
+.python-version
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.hypothesis/
+
+# ── Node / JS (if any client tooling) ────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# ── Android / Gradle (phone & Quest client) ──────────────
+.gradle/
+build/
+local.properties
+*.apk
+*.aab
+*.keystore
+*.jks
+captures/
+.cxx/
+
+# ── Logs & runtime artifacts ─────────────────────────────
+*.log
+bench.log
+*.pid
+*.sqlite
+*.sqlite3
+
+# ── Editors / IDEs ───────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ── macOS ────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
