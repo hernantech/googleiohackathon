@@ -9,10 +9,15 @@ dependencies = [
     "httpx>=0.27",
     "langgraph>=0.2",   # production substrate for the graph (01 §5/§6); the
                         # deterministic GraphEngine validates the same nodes offline
+    "fastapi>=0.115",   # serving surface (HANDOFF §2.A)
+    "uvicorn[standard]>=0.32",
+    "websockets>=13",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+# Real model wiring (ROADMAP Phase 3); not needed to boot in stub mode.
+live = ["google-genai>=0.3"]
 
 [build-system]
 requires = ["setuptools>=68"]
