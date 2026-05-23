@@ -36,12 +36,15 @@ CREATE TABLE IF NOT EXISTS events (
     author_id   TEXT,                      -- @power, @firmware, user, system
     call_id     TEXT,                      -- correlates ConfirmationRequest/Response, SummonGuild/SmeResponse
     summary     TEXT,                      -- short human-facing snippet (body/claim/reason)
+    dedup_key   TEXT,                      -- stable id for replay-able events (NULL ⇒ never deduped)
     raw_json    TEXT    NOT NULL           -- the full normalized event for the distiller + drill-down
 );
 CREATE INDEX IF NOT EXISTS idx_events_received ON events (received_ms);
 CREATE INDEX IF NOT EXISTS idx_events_session  ON events (session_id, received_ms);
 CREATE INDEX IF NOT EXISTS idx_events_kind     ON events (kind, received_ms);
 CREATE INDEX IF NOT EXISTS idx_events_call     ON events (call_id);
+-- The UNIQUE dedup_key index is created in Store._migrate (after ensuring the
+-- column exists) so it also applies to DBs created by an older observer.
 
 CREATE TABLE IF NOT EXISTS status (
     session_id   TEXT PRIMARY KEY,
@@ -85,7 +88,44 @@ class Store:
             self._conn.execute("PRAGMA journal_mode=WAL;")
         self._conn.execute("PRAGMA synchronous=NORMAL;")
         self._conn.executescript(SCHEMA)
+        self._migrate()
         self._conn.commit()
+
+    def _migrate(self) -> None:
+        """Forward-compatible, idempotent migrations for DBs created by an older
+        observer (the volume persists across redeploys). Adds ``dedup_key`` to a
+        pre-existing ``events`` table — ``CREATE TABLE IF NOT EXISTS`` alone
+        won't add a column to a table that already exists. The UNIQUE dedup
+        index is (re)created here so it covers both fresh and migrated DBs.
+
+        DBs created by an older observer may contain duplicate rows from
+        reconnect replays; a UNIQUE index can't be built over them. We dedupe
+        those legacy rows first (keep the lowest id per messageId/callId) so the
+        index always builds."""
+        cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(events)")}
+        if "dedup_key" not in cols:
+            self._conn.execute("ALTER TABLE events ADD COLUMN dedup_key TEXT")
+        # Backfill dedup_key for any pre-existing rows (idempotent: only NULLs).
+        self._conn.execute(
+            "UPDATE events SET dedup_key = 'ChatMessage:' || "
+            "json_extract(raw_json, '$.messageId') "
+            "WHERE dedup_key IS NULL AND kind='ChatMessage' "
+            "AND json_extract(raw_json, '$.messageId') IS NOT NULL"
+        )
+        self._conn.execute(
+            "UPDATE events SET dedup_key = 'ConfirmationRequest:' || "
+            "json_extract(raw_json, '$.callId') "
+            "WHERE dedup_key IS NULL AND kind='ConfirmationRequest' "
+            "AND json_extract(raw_json, '$.callId') IS NOT NULL"
+        )
+        # Drop legacy duplicates so the UNIQUE index can be built (keep earliest).
+        self._conn.execute(
+            "DELETE FROM events WHERE dedup_key IS NOT NULL AND id NOT IN "
+            "(SELECT MIN(id) FROM events WHERE dedup_key IS NOT NULL GROUP BY dedup_key)"
+        )
+        self._conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_events_dedup ON events (dedup_key)"
+        )
 
     @contextmanager
     def _cursor(self) -> Iterator[sqlite3.Cursor]:
@@ -96,19 +136,22 @@ class Store:
             cur.close()
 
     # ── writes ────────────────────────────────────────────────────────────
-    def insert_event(self, event: dict[str, Any]) -> int:
-        """Persist one normalized event. Returns the new row id.
+    def insert_event(self, event: dict[str, Any]) -> int | None:
+        """Persist one normalized event. Returns the new row id, or ``None`` if
+        the event was a duplicate (same ``dedup_key`` already stored) and so was
+        ignored — the bus replays its buffer on every WS reconnect, so this
+        keeps reconnects idempotent instead of inflating counts/timelines.
 
         ``event`` is the dict produced by ``ingest.normalize`` — it carries the
-        flattened columns plus ``raw_json``.
+        flattened columns plus ``raw_json`` and an optional ``dedup_key``.
         """
         with self._write_lock, self._cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO events
+                INSERT OR IGNORE INTO events
                     (ts_ms, received_ms, kind, session_id, channel_id,
-                     author_id, call_id, summary, raw_json)
-                VALUES (?,?,?,?,?,?,?,?,?)
+                     author_id, call_id, summary, dedup_key, raw_json)
+                VALUES (?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     event["ts_ms"],
@@ -119,10 +162,14 @@ class Store:
                     event.get("author_id"),
                     event.get("call_id"),
                     event.get("summary"),
+                    event.get("dedup_key"),
                     event["raw_json"],
                 ),
             )
             self._conn.commit()
+            # rowcount == 0 ⇒ the OR IGNORE dropped a duplicate.
+            if cur.rowcount == 0:
+                return None
             return int(cur.lastrowid)
 
     def upsert_status(

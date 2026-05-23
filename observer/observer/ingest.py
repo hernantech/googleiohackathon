@@ -24,8 +24,26 @@ from observer.store import Store, now_ms, ns_to_ms
 
 log = logging.getLogger("observer.ingest")
 
-# Audio is high-volume + zero manager signal — never persist it.
-_DROP_KINDS = {"AudioChunk", "Ping", "Pong"}
+# Audio is high-volume + zero manager signal — never persist it. The replay
+# envelopes (ChannelList/ReplayDone/BackpressureNotice) are re-sent on every
+# reconnect, carry no manager signal, and have no stable id to dedup on — drop.
+_DROP_KINDS = {
+    "AudioChunk", "Ping", "Pong",
+    "ChannelList", "ReplayDone", "BackpressureNotice",
+}
+
+
+def _dedup_key_for(kind: str, data: dict[str, Any]) -> str | None:
+    """Stable id for events the bus REPLAYS on reconnect, so re-delivery is
+    idempotent. The orchestrator's replay buffer holds ChatMessages (keyed by
+    the client-stable ``messageId`` ULID) and re-sends pending
+    ConfirmationRequests (one per ``callId``). Everything else returns ``None``
+    (never deduped — SQLite treats NULL dedup_key rows as distinct)."""
+    if kind == "ChatMessage" and data.get("messageId"):
+        return f"ChatMessage:{data['messageId']}"
+    if kind == "ConfirmationRequest" and data.get("callId"):
+        return f"ConfirmationRequest:{data['callId']}"
+    return None
 
 
 def _truncate(text: str | None, n: int = 280) -> str | None:
@@ -113,6 +131,7 @@ def normalize(data: dict[str, Any], *, default_session_id: str | None = None) ->
         "author_id": _author_of(kind, data),
         "call_id": data.get("callId"),
         "summary": _summary_for(kind, data),
+        "dedup_key": _dedup_key_for(kind, data),
         "raw_json": json.dumps(data, separators=(",", ":")),
     }
 
@@ -144,8 +163,10 @@ async def ingest_loop(store: Store, settings: Settings, *, stop: asyncio.Event |
 
     Imports ``websockets`` lazily so the persist path (and its tests) carry no
     socket dependency. On any disconnect we reconnect with jittered exponential
-    backoff; the orchestrator replays the last-200 buffer on reconnect, so we
-    rely on event/session ids being stable for natural dedup at read time.
+    backoff. The orchestrator replays its last-200 ChatMessages + pending
+    ConfirmationRequests on reconnect; the ``dedup_key`` UNIQUE index in the
+    store (see ``_dedup_key_for``) makes those re-deliveries idempotent so a
+    flapping connection never inflates counts/timelines.
     """
     import websockets  # lazy: only the live path needs it
 

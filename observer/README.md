@@ -92,6 +92,19 @@ reconnect logic and survives proxy/restart hiccups. Less to break.
 | `observer/static/index.html` | the single-page dashboard (vanilla JS, polls `/api/overview`) |
 | `observer/main.py` | wires the three tasks into one uvicorn app |
 
+### Reconnect dedup
+
+The orchestrator replays its last-200 `ChatMessage`s + pending
+`ConfirmationRequest`s on every WS reconnect (`orchestrator/chat_bus/bus.py`).
+To keep a flapping connection from inflating counts/timelines, the `events`
+table has a `dedup_key` column with a `UNIQUE` index and inserts use
+`INSERT OR IGNORE`. Replay-able events get a stable key (`ChatMessage:<messageId>`,
+`ConfirmationRequest:<callId>`); everything else gets `NULL` (SQLite treats
+multiple `NULL`s as distinct, so genuinely separate events — e.g. two
+`SmeResponse`s sharing a `callId` — are never over-deduped). The store migrates
+older DBs on open (adds the column, collapses any legacy duplicate rows, builds
+the index) so the persistent volume survives the upgrade.
+
 ---
 
 ## Run it locally
@@ -137,14 +150,16 @@ CI** (it depends on live traffic existing).
 ```bash
 cd observer
 pip install -r requirements.txt pytest httpx
-pytest                       # 24 tests, deterministic, no network
+pytest                       # 29 tests, deterministic, no network
 ```
 
 The suite proves the contract end-to-end with **synthetic** bus events and a
 **stubbed** Gemini call (no network):
 
 - `test_ingest_persist.py` — synthetic events → `persist_event` → SQLite →
-  read back; audio/heartbeat dropped; pending-confirmation ages tracked.
+  read back; audio/heartbeat dropped; pending-confirmation ages tracked;
+  reconnect-replay dedup (duplicate `ChatMessage`/`ConfirmationRequest` ignored,
+  genuinely distinct events not over-deduped).
 - `test_distill.py` — `compute_facts` extracts SMEs/task/flags; each attention
   flag fires on its trigger; `distill_once` with a **stub** model writes a
   status row; falls back to heuristic when the model raises or the key is unset.
