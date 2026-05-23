@@ -15,12 +15,11 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Dependencies first for layer caching.
+# Project metadata + source, then install. (setuptools needs the package
+# directory present at build time, so source is copied before `pip install`.)
 COPY pyproject.toml ./
-RUN pip install .
-
-# App source.
 COPY orchestrator ./orchestrator
+RUN pip install .
 
 # Drop privileges.
 RUN useradd --create-home --uid 10001 forge
