@@ -1,0 +1,10 @@
+{
+  "affirmLabel": "I did it",
+  "bodyMarkdown": "Set bench PSU CH1 to **30.0 V**, 0.5 A limit, across the cell-sim ladder (J3).",
+  "denyLabel": "Skip",
+  "diffMarkdown": "| | Now | Set |\n|---|---|---|\n| CH1 | off | 30.0 V / 0.5 A |",
+  "documentedLimit": "board doc max: 30 V",
+  "kind": "ActionCard",
+  "risk": "HIGH",
+  "title": "@power asks you to:"
+}

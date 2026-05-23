@@ -1,0 +1,17 @@
+{
+  "kind": "SafetyInterrupt",
+  "reason": "Hot iron near a powered board.",
+  "severity": "WARN",
+  "suggestedRecoverActions": [
+    {
+      "actor": "operator",
+      "argsJson": "{\"channel\":1}",
+      "documentedLimitRef": null,
+      "instruction": "Turn the PSU output OFF now.",
+      "rationale": "Power down before rework.",
+      "risk": "LOW",
+      "tool": "disable_psu_output"
+    }
+  ],
+  "ts": 1716500000000000000
+}
