@@ -3,7 +3,7 @@
 > Frozen vocabulary for every cross-process message in Forge.
 > Lineage: extends `forge_orchestrator/proto/events.py` and `forge_quest/proto/AgentProto.kt` from v1. New event types are additive — every v1 event still exists and still carries the same fields.
 > Cross-refs: `01_langgraph_state_machine.md` (consumers), `04_chat_bus_protocol.md` (client surface), `05_board_knowledge_api.md` (knowledge-lookup + operator-step contract).
-> Model: Forge advises a human operator. No process actuates hardware — "actions" are operator instructions and read-only knowledge lookups. There is no bench daemon. Camera frames are not a client channel; they are tapped server-side from the Live video stream (§4).
+> Model: Forge advises a human operator. No process actuates hardware — "actions" are operator instructions and read-only knowledge lookups. There is no bench daemon. Two media paths, both produced on-device from one camera session: an **always-on H.264+audio** stream to Gemini Live, and an **on-demand hi-res JPEG snapshot** (one `POST /v2/snapshot` per 📷 tap) sent to a stronger model. The orchestrator never decodes or re-encodes video (§4).
 
 ---
 
@@ -14,14 +14,15 @@
                 │   Phone / Quest UI    │      Discord-style chat client
                 │   (Kotlin / Compose)  │      camera+mic capture; speaker out
                 └─────────┬─────────────┘
-                          │ (A) ChatBus WS — JSON only — see 04
-                          │ (B) Live WS    — bidi audio + VIDEO — Gemini Live framing
-                          │     (no separate frame channel; FrameTap samples B — §4)
+                          │ (A) ChatBus WS  — JSON only — see 04
+                          │ (B) Live WS     — always-on H.264 video + audio — Gemini Live framing
+                          │ (F) HTTP POST /v2/snapshot — one hi-res JPEG per 📷 tap — see §4
+                          │     (device emits both encodings; orchestrator never transcodes)
                           ▼
                 ┌───────────────────────┐
                 │   Orchestrator        │      LangGraph; one graph instance per session
-                │   (Python 3.12)       │      GeminiLiveBridge owns the FrameTap
-                └──┬───────┬────────────┘
+                │   (Python 3.12)       │      Bridge passes H.264 to Live; SnapshotAnalyzer
+                └──┬───────┬────────────┘      handles /v2/snapshot
                    │       │
                    │       │ (C) Managed-Agents REST/SSE — see Spike 1/4
                    │       ▼
@@ -37,7 +38,7 @@
 
 The human at the bench performs every physical step Forge recommends; no channel reaches an instrument. Knowledge lookups (board doc, datasheets, documented limits — `05`) are in-process via the KnowledgeAdapter, not a network channel.
 
-Channel A is defined here. B is defined by Google (the FrameTap consumes its video; §4). C is defined by Google (we wrap with envelopes — see §6). E is Google's Live protocol verbatim. (The former channel D — BenchDaemon JSON-RPC — is removed.)
+Channel A and the `/v2/snapshot` endpoint (F) are defined here. B is defined by Google (always-on H.264+audio to Live; §4). C is defined by Google (we wrap with envelopes — see §6). E is Google's Live protocol verbatim. (The former channel D — BenchDaemon JSON-RPC — is removed.)
 
 ---
 
@@ -307,6 +308,14 @@ sealed class AgentEvent {
     val risk: Risk, val documentedLimit: String? = null,
     val affirmLabel: String = "I did it", val denyLabel: String = "Skip"
 )
+// The on-demand snapshot result (carried inside a ChatMessage application/json body).
+@Serializable data class FrameRef(
+    val uri: String, val width: Int, val height: Int, val ts: Long, val sourceSeq: Int
+)
+@Serializable data class SnapshotAnalysis(
+    val jobId: String, val frame: FrameRef, val model: String,
+    val analysis: String, val cites: List<EvidenceRef> = emptyList(), val ts: Long
+)
 ```
 
 ---
@@ -328,11 +337,26 @@ The `deferred` boolean in `ToolResult` exists in both branches so client rendere
 
 ---
 
-## 4. Frame source and internal frame format (FrameTap)
+## 4. Media paths: always-on video + on-demand snapshot
 
-**Frames are NOT a client channel.** The client sends one Live media stream (channel B: audio + video, Gemini Live framing). The orchestrator's **FrameTap** (a tee + sampler living in `GeminiLiveBridge`, ARCHITECTURE §2) subscribes to the *same* video frames being forwarded to Gemini Live, throttles to ≈2–5 fps, JPEG-encodes, and publishes a `FrameRef` into `ForgeState.latestFrame`, the `FrameStore`, and `@sentinel`'s vision feed. This guarantees the SMEs analyze exactly the pixels Live saw, with no second uplink and no cadence drift.
+There are **two media paths**, both produced on the device from **one camera session with two outputs** (iOS `AVCaptureSession` + `AVCaptureVideoDataOutput`/movie + `AVCapturePhotoOutput`; Android/Quest one `CameraDevice` + an encoder surface + an `ImageReader`). The orchestrator **never decodes or re-encodes** video.
 
-`FrameRef` (what flows through state / to SMEs / to the chat bus as a contextRef):
+### 4.1 Always-on — H.264 video + audio → Gemini Live (channel B)
+
+Continuous, real-time, consumed by the (weaker) Live model. The `GeminiLiveBridge` passes the device's H.264 + audio straight through to Live; it does not derive frames from it. Continuous vision (including `@sentinel`'s hazard watch, `01 §4.1`) is whatever Live perceives. Mic capture 16 kHz mono; speaker out 24 kHz — Live-session settings, not a Forge binary format. This is the **only persistent media socket**, so reconnection has a single lifecycle (`08 §3.5`).
+
+### 4.2 On-demand — hi-res JPEG snapshot → stronger model (endpoint F)
+
+When the operator taps 📷 (or, later, an agent calls the same entrypoint), the client captures one **full-resolution** still from the photo output and uploads it:
+
+```
+POST /v2/snapshot?sessionId=<ulid>
+Content-Type: image/jpeg            ; body = the JPEG bytes
+                                    ; optional ?note=<url-encoded hint>
+→ 202 { "jobId": "<ulid>" }         ; analysis arrives async over the chat bus
+```
+
+The orchestrator's `SnapshotAnalyzer` stores the JPEG (FrameStore), runs `analyze_snapshot(image, recent_context)` against a stronger model (`GEMINI_SNAPSHOT_MODEL`, e.g. Gemini 3.x/4.x `generateContent`), and emits the result as a `SnapshotAnalysis` (below) that (a) posts to `#live-feed` as a `ChatMessage`, (b) sets `ForgeState.latestFrame`, and (c) is available as an `EvidenceRef(kind="frame")` to the next `summon_guild`. It is a one-shot request/response — no persistent socket, no transcode.
 
 ```python
 class FrameRef(BaseModel):
@@ -340,11 +364,25 @@ class FrameRef(BaseModel):
     uri: str                                       # gs://… (FrameStore) or in-mem id
     width: int
     height: int
-    ts: int                                        # ns; the Live frame's capture ts
-    sourceSeq: int                                 # monotonic FrameTap sample index
+    ts: int                                        # ns; capture ts on the device
+    sourceSeq: int                                 # monotonic snapshot index within the session
+
+class SnapshotAnalysis(BaseModel):
+    """Result of analyze_snapshot(). Carried inside a ChatMessage
+    (bodyContentType=application/json) AND sets state.latestFrame.
+    Not in the AgentEvent union — like ActionCard, it is a card payload."""
+    kind: Literal["SnapshotAnalysis"] = "SnapshotAnalysis"
+    jobId: str
+    frame: FrameRef                                # the hi-res snapshot
+    model: str                                     # e.g. "gemini-3-pro"
+    analysis: str                                  # markdown
+    cites: list[EvidenceRef] = Field(default_factory=list)   # datasheet/board-doc citations
+    ts: int
 ```
 
-The on-disk / FrameStore byte format the FrameTap *produces* (and that internal consumers may pass around) keeps the v1 binary header for tooling compatibility:
+### 4.3 Internal frame byte format (FrameStore)
+
+The snapshot JPEG stored in `FrameStore` keeps the v1 binary header for tooling compatibility:
 
 | Offset | Size | Field |
 |---|---|---|
@@ -354,11 +392,10 @@ The on-disk / FrameStore byte format the FrameTap *produces* (and that internal 
 | 12 | 8 | Timestamp ns uint64 LE |
 | 20 | … | Payload |
 
-Payload encodings:
-- `FRAM`: JPEG, quality ≥ 70, max dimension ≤ 1920 px (FrameTap enforces).
-- `META`: UTF-8 JSON, ≤ 8 KB — frame-aligned annotations (e.g. a tap-to-zoom-here coordinate the client sends over channel A as a `ChatMessage` `META` body, resolved against `FrameRef.sourceSeq`).
+- `FRAM`: JPEG, quality ≥ 70 (snapshots are full-res; the client may downscale to ≤ 4096 px long edge before upload).
+- `META`: UTF-8 JSON, ≤ 8 KB — frame-aligned annotations (e.g. a tap/gaze-to-zoom coordinate the client sends as a `ChatMessage` `META` body, resolved against `FrameRef.sourceSeq`).
 
-`AUDI` (raw PCM) is **removed from this spec**: audio rides inside the Live channel (B) in Google's framing; the orchestrator never re-frames it. Mic capture is 16 kHz mono; speaker out is 24 kHz — these are Live-session settings, not a Forge binary format.
+`AUDI` (raw PCM) is **removed**: audio rides inside the Live channel (B) in Google's framing; the orchestrator never re-frames it.
 
 ---
 
@@ -426,7 +463,7 @@ Either way, the orchestrator passes the verified `uid` to LangGraph state under 
 
 - Internal LangGraph state graph — never serialised to a client; replay uses checkpoint storage + the ChatMessage history.
 - SME-to-SME chat — modeled as orchestrator-mediated messages in `#dissent` / `#actions`; SMEs do not have a direct WS to each other.
-- Per-SME tool calls from inside the sandbox (file writes, web fetches, code exec) — those are internal to Managed Agents and never surface as `ToolCall` events. Only the orchestrator's user-visible tools (`summon_guild`, `confirm_step`, and knowledge lookups `lookup_datasheet` / `lookup_board_doc` / `get_documented_limit` — `05`) become `ToolCall`s. There are no hardware-actuation tools at all.
+- Per-SME tool calls from inside the sandbox (file writes, web fetches, code exec) — those are internal to Managed Agents and never surface as `ToolCall` events. Only the orchestrator's user-visible tools (`summon_guild`, `confirm_step`, `analyze_snapshot`, and knowledge lookups `lookup_datasheet` / `lookup_board_doc` / `get_documented_limit` — `05`) become `ToolCall`s. There are no hardware-actuation tools at all. (`analyze_snapshot` is normally triggered by the 📷 button via `POST /v2/snapshot`, but it is registered as a tool so an agent could call it autonomously later — out of scope for the hackathon.)
 
 ---
 
@@ -448,5 +485,7 @@ These are the unit/contract tests that gate any change to this file. They run wi
 | WP-8 | `FrameRef` validates with a `gs://` and an in-mem `mem:` URI; rejects empty `uri` | accept/accept/reject |
 | WP-9 | Protocol gate: a `Hello` without `protocolVersion` is rejected by the v2 validator (required field) | `ValidationError` |
 | WP-10 | No actuation surface: assert the tool-name registry exposed to clients contains none of `set_psu`/`flash_mcu` as *executable* tools — only as `ProposedAction.tool` step labels | registry assertion holds |
+| WP-11 | `SnapshotAnalysis` round-trips (Python + Kotlin via golden corpus); embeds a valid `FrameRef`; `cites` defaults to `[]` | parity + defaults |
+| WP-12 | `analyze_snapshot` is in the user-visible tool registry; the registry exposes **no** video-decode/transcode entrypoint (the snapshot path stores bytes, never decodes the H.264) | tool present; no transcode symbol |
 
-The golden corpus in WP-6 is the single source of truth for cross-language parity and is reused by the system-level contract test `08 §3.1`.
+The golden corpus in WP-6 (now including `SnapshotAnalysis`) is the single source of truth for cross-language parity and is reused by the system-level contract test `08 §3.1`.

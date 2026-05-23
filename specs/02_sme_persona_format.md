@@ -2,7 +2,7 @@
 
 > The on-disk layout, files, and conventions for every SME's Managed-Agents sandbox.
 > Cross-refs: `00_wire_protocol.md` §2 (SmeResponse), `01_langgraph_state_machine.md` §3.3 (how prompts are assembled), `03_safety_gate_matrix.md` §3 (who may recommend what), `05_board_knowledge_api.md` (knowledge-lookup + operator-step contract).
-> Model: SMEs **recommend operator steps** (the human performs them) and **request read-only knowledge lookups**. No SME actuates hardware — there is no bench daemon. `@bench-tech` is removed (it existed only to actuate). Frames in `inbox/` come from the server-side FrameTap (`00 §4`), not a client upload.
+> Model: SMEs **recommend operator steps** (the human performs them) and **request read-only knowledge lookups**. No SME actuates hardware — there is no bench daemon. `@bench-tech` is removed (it existed only to actuate). `inbox/frame.jpg` is the latest **on-demand snapshot** (`00 §4.2`) — a full-res still the operator captured on 📷 tap, already analyzed by the strong model — and is absent until the first snapshot. There is no continuous frame feed; continuous vision lives with Gemini Live.
 
 ---
 
@@ -185,7 +185,7 @@ Skills are LOADED on demand by the SME; the AGENTS.md instructs the model to gre
 `/workspace/tools/` is the SME's private executable kit. Anything callable from `run_shell` or `run_python` inside the sandbox.
 
 Examples:
-- `@reverse/tools/ocr_chip.py` — wraps the sandbox's PIL + tesseract install to extract chip markings from `inbox/frame.jpg` (the FrameTap frame).
+- `@reverse/tools/ocr_chip.py` — wraps the sandbox's PIL + tesseract install to extract chip markings from `inbox/frame.jpg` (the latest on-demand snapshot).
 - `@signal/tools/decode_uart.py` — local pyserial decoder for a raw capture the *operator* exported from their own logic analyzer / scope and uploaded; this decodes the file. (Forge does not capture — the human does.)
 - `@power/tools/rail_budget.py` — sums currents from a parts list to compute total rail draw, so @power can tell the operator what PSU current limit to dial in.
 
@@ -312,15 +312,17 @@ problems (that's the rest of the guild); only flags hazards and proposes
 recovery actions.
 
 ## Always-on?
-YES. Subscribed to:
-- every FrameTap frame (`latestFrame`, ≈2–5 fps — `00 §4`)
-- every `latestTranscriptFinal`
+YES. Your continuous eyes are **Gemini Live** (the always-on H.264 view, `00 §4.1`),
+surfaced to you as vision cues + transcript. Subscribed to:
+- Live vision cues + every `latestTranscriptFinal`
+- any on-demand `SnapshotAnalysis` the operator triggers (`00 §4.2`)
 - operator-reported readings (whatever the human says aloud or reads off the
   DMM in response to a `probe_net` step) as they appear in the transcript
 You receive these as appended entries in `/workspace/inbox/stream.jsonl`
 rather than per-turn `prompt.md`. You DO NOT respond to every entry —
-only on hazard detection. (There is no telemetry stream — Forge does not
-talk to any instrument; your eyes are the camera and your ears are the mic.)
+only on hazard detection. (There is no telemetry stream and no dedicated frame
+grab — Forge does not talk to any instrument; your eyes are Live's camera view
+and your ears are the mic.)
 
 ## Tools available
 - `read_file`, `list_directory`, `run_python`
@@ -449,4 +451,4 @@ Run: `pytest smes/tests/`. These validate the *files on disk* and a faked single
 | SME-5 | A `SmeResponse` whose `proposedActions[].actor=="operator"` and has a numeric `argsJson` value but no `documentedLimitRef` → flagged by a lint check ("setpoint without citation") | lint fails the response |
 | SME-6 | `@power` proposing a `flash_mcu` step → SafetyGate "Invokable by" check rejects (out of lane); `@firmware` proposing it → accepted by the matrix | matrix agrees with §7/§8 lanes |
 | SME-7 | `@sentinel` single-turn with a hazard frame → emits `SafetyInterrupt(HALT)` + a `disable_psu_output` operator step, and emits NO diagnostic claim | hazard-only behavior |
-| SME-8 | `inbox/frame.jpg` provided to a persona is the FrameTap artifact (FRAM header, JPEG q≥70) — personas read it without re-decoding from any client channel | reads cleanly |
+| SME-8 | when a snapshot exists, `inbox/frame.jpg` is the snapshot artifact (FRAM header, JPEG q≥70) and `inbox/` carries the `SnapshotAnalysis` text; when none has been taken, both are absent and the persona reasons from transcript only | both states handled |

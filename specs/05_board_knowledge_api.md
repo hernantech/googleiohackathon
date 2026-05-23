@@ -18,7 +18,7 @@ What used to be RPCs are now two distinct things:
 | Old (bench daemon RPC) | New |
 |---|---|
 | `set_psu`, `enable_psu_output`, `serial_send`, `flash_mcu`, `capture_logic`, `chip_capture` | **operator steps** (`ProposedAction(actor="operator")`) — instructions Forge renders for the human (`§5`) |
-| `_telemetry`, `meter_read` | the human reads their own DMM/scope and **reports the value aloud**; it enters the system through the Live transcript and the FrameTap, not a wire |
+| `_telemetry`, `meter_read` | the human reads their own DMM/scope and **reports the value aloud**; it enters the system through the Live transcript (or an on-demand snapshot, `00 §4.2`), not a wire |
 | `device_profile` over `_welcome` | the **board profile** YAML, loaded once at startup by the orchestrator (`§2`) |
 | daemon-side hard limits | **documented board limits** consulted via `get_documented_limit` (`§4`) |
 
@@ -122,6 +122,10 @@ result: {
 
 Resolution order: `board_profile` structured limits first; if `kind="part"` or richer absolute-max needed, fall through to `lookup_datasheet` for the part's absolute-maximum-ratings table. `found=false` → SafetyGate uses the conservative defaults and forces the step to ≥ MEDIUM (`03 §6`).
 
+### 3.4 Used by the snapshot analyzer too
+
+The `SnapshotAnalyzer` (`00 §4.2`) runs the strong model with these same lookups available, so its `SnapshotAnalysis.cites` are grounded citations (e.g. "this is a BQ79616; per datasheet §7 it needs the stack present") rather than free-form vision guesses. Same read-only contract, no special path.
+
 ---
 
 ## 4. Documented limits (the second safety layer)
@@ -192,5 +196,6 @@ Run: `pytest orchestrator/knowledge/tests/`. The KnowledgeAdapter is exercised a
 | BK-8 | every operator-step `tool` verb in §5 maps to a renderer template in the client and a matrix row in `03 §3` | no orphan verbs |
 | BK-9 | a `set_psu` operator step lacking `documentedLimitRef` is rejected by the provenance lint (mirrors SG-8) | provenance enforced |
 | BK-10 | no symbol named `set_psu`/`flash_mcu` is *callable* in the KnowledgeAdapter — they exist only as step labels | no actuation path |
+| BK-11 | `analyze_snapshot(img, ctx)` with a fixture image of the BQ79616 → the returned `SnapshotAnalysis.cites` reference a real datasheet/board-doc passage (grounded, not invented) | citation present |
 
-BK-2 and BK-7 are reused by the system-level safety + offline tests (`08 §3.4`, `08 §3.5`).
+BK-2 and BK-7 are reused by the system-level safety + offline tests (`08 §3.4`, `08 §3.6`); BK-11 by the snapshot integration test (`08 §3.5`).

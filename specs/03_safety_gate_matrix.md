@@ -83,6 +83,7 @@ Columns:
 | Step | Invokable by | Gate (orchestrator) | Risk | Confirmation UI |
 |---|---|---|---|---|
 | `summon_guild` | LiveSpeaker (Live function call) | allow | LOW | none — internal |
+| `request_snapshot` (ask the operator to tap 📷 for a sharp look) | any SME | allow | LOW | spoken prompt + 📷 button highlight; the human chooses to capture |
 | `lookup_datasheet` / `lookup_board_doc` / `get_documented_limit` | any SME | allow (read-only) | LOW | none — surfaces as @librarian / `#actions` note |
 | `web_fetch` (from within sandbox) | any SME with tool | allow (sandbox-scoped) | LOW | log only |
 | `request_human_confirmation` | any SME | always confirm | varies | InstructionCard |
@@ -155,7 +156,7 @@ Independent of the orchestrator gate. There is no daemon; the second layer is:
 | Absolute-max ratings per part | datasheet via `lookup_datasheet` (`05 §3`) |
 | "PSU off before flash / rework" precondition | `board_profile.preconditions` |
 
-2. **`@sentinel` live hazard watch** (`02 §8`, §5 above). Continuous vision + voice monitoring, independent of the gate. If the gate is misconfigured and surfaces a bad instruction, the human still has the sentinel and their own eyes.
+2. **`@sentinel` live hazard watch** (`02 §8`, §5 above). Continuous monitoring **via Gemini Live's always-on view** (`00 §4.1`) + the voice transcript + any on-demand snapshot — independent of the gate. There is no dedicated frame feed, so this layer is best-effort vision (whatever Live perceives) plus the human's own eyes. If the gate is misconfigured and surfaces a bad instruction, the human still has the sentinel and their own judgment.
 
 Fallback when limits are unknown: if the board profile is absent, SafetyGate uses the hardcoded conservative defaults `SAFETY_DEFAULT_MAX_VOLTAGE_V` / `SAFETY_DEFAULT_MAX_CURRENT_A` (`07 §2.1`), and every value-bearing step is forced to at least MEDIUM (so the human is always asked to confirm a setpoint that lacks a documented source).
 

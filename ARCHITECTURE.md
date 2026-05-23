@@ -24,7 +24,11 @@ Forge **does NOT** actuate any instrument. There is no bench daemon, no JSON-RPC
 
 Two changes from the earlier draft drive these diagrams:
 
-- **One video, one source of truth.** The client sends a single Live media stream (audio + video). Frames for the SMEs and `@sentinel` are *tapped server-side* from that same stream by a **FrameTap** — they are no longer a second binary channel uploaded by the client. See §2 and the note at the end of §1.
+- **Two media paths, by purpose — fork on the device, never on the server.** One camera capture, two *outputs* produced on-device (one camera session, two outputs — not two sessions, not a server transcode):
+  - **always-on** H.264 video + audio → **Gemini Live** (real-time, the "eyes are always open"; weaker model, continuous);
+  - **on-demand** high-res JPEG **snapshot** (operator taps 📷) → `POST /v2/snapshot` → a **stronger model** (Gemini 3.x/4.x `generateContent`) for sharp, one-shot reasoning. The result becomes evidence in the guild.
+
+  Only the H.264 path is a persistent socket; the snapshot is a stateless request/response. The orchestrator never decodes or re-encodes video — the device emits both encodings directly. See §2 and the note at the end of §1.
 - **No bench daemon.** The "actions" the guild proposes are *operator instructions* and *knowledge lookups*, not RPCs. `@bench-tech` (the only SME that could actuate) is removed.
 
 ---
@@ -44,31 +48,32 @@ Two changes from the earlier draft drive these diagrams:
                                     │  the human reads Forge's instructions
                                     │  and performs the steps by hand
         ┌───────────────────────┐  │
-        │  Phone or Quest 3     │  │
+        │  Phone (iOS) or Quest │  │
         │                       │  │
         │  ┌─────────────────┐  │  │ camera ▶  (sees the bench + hands)
-        │  │ Live media       │ │  │ mic    ▶  (operator's voice)
-        │  │  capture (A/V)   │◀─┼──┘ voice  ◀  (Forge speaks instructions)
+        │  │ ONE camera      │  │  │ mic    ▶  (operator's voice)
+        │  │ session, TWO    │◀─┼──┘ voice  ◀  (Forge speaks instructions)
+        │  │ outputs:        │  │
+        │  │  • H.264+audio  │  │   ← always-on  → Live
+        │  │  • hi-res photo │  │   ← on 📷 tap  → /v2/snapshot
         │  └────────┬─────────┘  │
-        │           │            │
         │  ┌────────┴─────────┐  │
         │  │ Discord-UI       │  │
         │  │ ───────────────  │  │
         │  │ #live-feed       │  │
-        │  │ #power           │  │
-        │  │ #signal          │  │
+        │  │ #power #signal   │  │
         │  │ #firmware        │  │
         │  │ #librarian       │  │
         │  │ #sentinel  (!)   │  │
-        │  │ #scribe          │  │
-        │  │ #dissent         │  │
+        │  │ #scribe #dissent │  │
         │  │ #actions (steps) │  │
         │  └──────────────────┘  │
         └──────────┬─────────────┘
-                   │  client → orchestrator over WSS:
-                   │   (A) ChatBus WS — JSON events
-                   │   (B) Live WS    — bidi audio + VIDEO (Gemini Live framing)
-                   │   ── NO separate jpeg frame channel (frames are tapped, see §2) ──
+                   │  client → orchestrator:
+                   │   (A) ChatBus WS  — JSON events
+                   │   (B) Live WS     — always-on H.264 video + audio (→ Gemini Live)
+                   │   (F) HTTP POST /v2/snapshot — one hi-res JPEG per 📷 tap (→ strong model)
+                   │   ── device emits both encodings; server never transcodes (see §2) ──
                    ▼
         ┌─────────────────────────────────────────────────────────────────────────┐
         │                                                                         │
@@ -76,33 +81,33 @@ Two changes from the earlier draft drive these diagrams:
         │                                                                         │
         │   ┌─────────────────┐         ┌─────────────────────────────┐           │
         │   │ GeminiLiveBridge│ ◄─────► │       LangGraph Engine      │           │
-        │   │  - bidi audio   │         │  PerceptionGate              │          │
-        │   │  - bidi VIDEO   │         │   ↓                          │          │
-        │   │  - func calls   │         │  SupervisorRouter            │          │
-        │   │  ┌───────────┐  │         │   ↓                          │          │
-        │   │  │ FrameTap  │──┼───────► │  ParallelSummonSMEs ──┐      │          │
-        │   │  │ tee+sample│  │         │   ↓                   │      │          │
-        │   │  └───────────┘  │         │  StreamingAggregator  │      │          │
-        │   └─────────────────┘         │   ↓                   │      │          │
-        │                               │  MergeOpinion ────────┤      │          │
+        │   │  - audio  ──────┼───────► │  PerceptionGate              │          │
+        │   │  - H.264 ───────┼──►Live  │   ↓                          │          │
+        │   │  - func calls   │  (passes │  SupervisorRouter            │          │
+        │   │    (no decode)  │  through)│   ↓                          │          │
+        │   └─────────────────┘         │  ParallelSummonSMEs ──┐      │          │
         │   ┌─────────────────┐         │   ↓                   │      │          │
-        │   │  Channel Bus    │ ◄─────► │  DissentDetector ◄────┘      │          │
-        │   │  - per-channel  │         │   ↓                          │          │
-        │   │    fan-out      │         │  SafetyGate (HITL interrupt) │          │
-        │   │  - replay       │         │   ↓                          │          │
-        │   └─────────────────┘         │  LiveSpeaker                 │          │
-        │                               └─────────────┬───────────────┘           │
-        │   ┌─────────────────┐                       │                           │
-        │   │  Audit Writer   │ ◄─────                 │                           │
-        │   │  (Firestore)    │         ┌──────────────▼────────────────┐          │
-        │   └─────────────────┘         │  ManagedAgentDispatcher       │         │
-        │                               │  - env registry (per SME)     │         │
-        │   ┌─────────────────┐         │  - SSE → channel-bus mapper   │         │
-        │   │  KnowledgeAdapter│◄──────►│  - always-on heartbeat        │         │
-        │   │  - board profile │        └─────────────┬────────────────┘          │
-        │   │  - datasheet RAG │                      │                           │
-        │   │  - documented    │                      │  google-genai             │
-        │   │    limits        │                      ▼                           │
+        │   │ SnapshotAnalyzer│         │  StreamingAggregator  │      │          │
+        │   │  /v2/snapshot   │         │   ↓                   │      │          │
+        │   │  → strong model │────────►│  MergeOpinion ────────┤      │          │
+        │   │  → EvidenceRef  │ evidence│   ↓                   │      │          │
+        │   │    + latestFrame│         │  DissentDetector ◄────┘      │          │
+        │   └─────────────────┘         │   ↓                          │          │
+        │   ┌─────────────────┐         │  SafetyGate (HITL interrupt) │          │
+        │   │  Channel Bus    │ ◄─────► │   ↓                          │          │
+        │   │  - fan-out      │         │  LiveSpeaker                 │          │
+        │   │  - replay       │         └─────────────┬───────────────┘           │
+        │   └─────────────────┘                       │                           │
+        │   ┌─────────────────┐         ┌──────────────▼────────────────┐          │
+        │   │  Audit Writer   │ ◄─────  │  ManagedAgentDispatcher       │          │
+        │   │  (Firestore)    │         │  - env registry (per SME)     │          │
+        │   └─────────────────┘         │  - SSE → channel-bus mapper   │          │
+        │   ┌─────────────────┐         │  - always-on heartbeat        │          │
+        │   │  KnowledgeAdapter│◄──────►└─────────────┬────────────────┘          │
+        │   │  - board profile │                      │                           │
+        │   │  - datasheet RAG │                      │  google-genai             │
+        │   │  - documented    │                      ▼                           │
+        │   │    limits        │                                                  │
         │   └─────────────────┘                                                   │
         └─────────────────────────────────────────────┼───────────────────────────┘
                                                       │
@@ -130,51 +135,53 @@ Two changes from the earlier draft drive these diagrams:
         └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Why there is no separate frame channel (answering the design question directly).**
-The video already flows to the orchestrator inside the Live media stream (channel B), on its way to Gemini Live. Having the client *also* push a parallel JPEG stream meant: (a) two encodings of the same pixels on the uplink, doubling client work and bandwidth; (b) two cadences that drift, so "what Live saw" and "what the SME analyzed" could disagree; and (c) two contracts the client had to keep in sync. The single benefit of a separate channel — letting SME vision run at a different resolution/cadence than Live — is preserved more cheaply by a **server-side FrameTap** that *tees* the Live video and *samples* it (≈2–5 fps, JPEG q≥70, ≤1920 px). One source of truth, less client code, no desync. The on-the-wire JPEG/`FrameRef` artifact still exists — it is now *produced by the orchestrator*, not uploaded by the client (`specs/00_wire_protocol.md` §4).
+**Why two media paths instead of one tapped stream (answering the design question directly).**
+The two paths are not two encodings of one feed for one consumer — they serve **different models with different jobs and cadences**, so they are legitimately distinct:
+
+- **Always-on H.264 + audio → Gemini Live.** Continuous, real-time, but a *weaker* model. This is the live conversation and the "eyes are always open."
+- **On-demand hi-res JPEG snapshot → a stronger model (Gemini 3.x/4.x).** A *one-shot* request when the operator (or, later, an agent) wants sharper vision than Live can give — read a chip marking, confirm a wiring detail. Not a stream.
+
+Crucially, the device produces both encodings itself, from **one camera session with two outputs** (iOS `AVCaptureSession` + `AVCaptureVideoDataOutput`/movie + `AVCapturePhotoOutput`; Android/Quest one `CameraDevice` + an encoder surface + an `ImageReader`). So:
+
+- the server **never decodes or re-encodes** video (no transcode pipeline to stall, leak, or lose quality);
+- only **one** persistent socket crosses the fragile client→cloud link (the Live path) — so reconnection has a single lifecycle; the snapshot is a stateless `POST` that opens and closes;
+- the snapshot is captured at *full sensor resolution* — sharper than any frame the H.264 path carries, which is the whole reason to escalate to the stronger model.
+
+The on-demand snapshot result is stored as a `FrameRef` / `EvidenceRef` in the `FrameStore` and posted into the guild (`specs/00_wire_protocol.md` §4). Autonomous (agent-triggered) snapshots reuse the same `analyze_snapshot()` entrypoint and are out of scope for the hackathon — the 📷 button is the only trigger shipped.
 
 ---
 
 ## 2. Orchestrator internals (zoomed in)
 
 ```
-                                ▼ WSS from client (2 channels, not 3)
+                          ▼ WSS (A chat, B Live)        ▼ HTTP POST /v2/snapshot
         ┌──────────────────────────────────────────────────────────────────┐
         │                                                                  │
         │   ┌──────────────────────────────────────────────────────────┐   │
         │   │           Connection Layer  (FastAPI /v2/session)        │   │
         │   │  AuthMiddleware → SessionFactory.open(client_jwt)        │   │
         │   └──────────────────────────────────────────────────────────┘   │
-        │                              │                                   │
-        │                  ┌───────────┴────────────┐                      │
-        │                  ▼                         ▼                      │
-        │       ┌────────────────────┐   ┌────────────────────┐            │
-        │       │ Live Channel        │   │ Chat Channel       │            │
-        │       │ (audio + VIDEO)     │   │ (json events)      │            │
-        │       └─────────┬──────────┘   └─────────┬──────────┘            │
-        │                 │                        │                       │
-        │                 ▼                        │                       │
-        │   ┌────────────────────────────────────┐ │                       │
-        │   │           GeminiLiveBridge          │ │                       │
-        │   │  - manages 1 Live session per WS    │ │                       │
-        │   │  - forwards user audio/video up     │ │                       │
-        │   │  - receives transcripts/tool-calls  │ │                       │
-        │   │  - inject_function_response(...)    │ │                       │
-        │   │                                     │ │                       │
-        │   │  ┌───────────────────────────────┐  │ │                       │
-        │   │  │ FrameTap  (tee + sampler)     │  │ │                       │
-        │   │  │  - subscribes to forwarded    │  │ │                       │
-        │   │  │    video frames               │  │ │                       │
-        │   │  │  - throttles to ≈2–5 fps      │  │ │                       │
-        │   │  │  - JPEG-encodes (q≥70)        │  │ │                       │
-        │   │  │  - publishes FrameRef →       │  │ │                       │
-        │   │  │      state.latestFrame        │  │ │                       │
-        │   │  │      FrameStore               │  │ │                       │
-        │   │  │      @sentinel vision feed    │  │ │                       │
-        │   │  └───────────────────────────────┘  │ │                       │
-        │   └────────────────────┬────────────────┘ │                       │
-        │                        │                   │                       │
-        │                        ▼                   ▼                       │
+        │                   │              │               │                 │
+        │                   ▼              ▼               ▼                 │
+        │       ┌────────────────┐ ┌──────────────┐ ┌────────────────────┐  │
+        │       │ Live Channel    │ │ Chat Channel │ │ /v2/snapshot       │  │
+        │       │ (H.264 + audio) │ │ (json events)│ │ (one hi-res JPEG)  │  │
+        │       └───────┬────────┘ └──────┬───────┘ └─────────┬──────────┘  │
+        │               │                 │                   │             │
+        │               ▼                 │                   ▼             │
+        │   ┌────────────────────────────┐│      ┌────────────────────────┐ │
+        │   │     GeminiLiveBridge        ││      │   SnapshotAnalyzer     │ │
+        │   │  - 1 Live session per WS    ││      │  - store JPEG (FrameStore)│
+        │   │  - PASS H.264 + audio to    ││      │  - analyze_snapshot():  │ │
+        │   │    Live (NO decode/encode)  ││      │    strong model         │ │
+        │   │  - transcripts / tool-calls ││      │    (gemini 3.x/4.x)     │ │
+        │   │  - inject_function_response ││      │  - emit SnapshotAnalysis│ │
+        │   │                             ││      │    → ChatMessage +      │ │
+        │   │                             ││      │      EvidenceRef +      │ │
+        │   │                             ││      │      state.latestFrame  │ │
+        │   └──────────────┬─────────────┘│      └───────────┬────────────┘ │
+        │                  │               │                 │              │
+        │                  ▼               ▼                 ▼              │
         │   ┌────────────────────────────────────────────────────────┐     │
         │   │                LangGraph Engine                        │     │
         │   │  state: ForgeState (transcript, latestFrame,           │     │
@@ -231,7 +238,7 @@ The **BenchDaemon Adapter is gone**. In its place: the **KnowledgeAdapter** (rea
                   ┌─────────────────────────────────────┐
                   │  PerceptionGate                     │
                   │  - normalize Live event             │
-                  │  - attach latest FrameTap frame     │
+                  │  - attach latest snapshot (if taken) │
                   │  - append to state.live_transcript  │
                   └────────────────┬────────────────────┘
                                    ▼
@@ -363,8 +370,10 @@ The **BenchDaemon Adapter is gone**. In its place: the **KnowledgeAdapter** (rea
 Scenario: BQ79616 bring-up. The ESP32 host reports a comm timeout reading cell voltages.
 
 ```
-Operator   Live          Bridge        LangGraph    Dispatcher    Managed-Agents API   Knowledge
-(human)    (+FrameTap)
+Operator   Live          Bridge        LangGraph    Snapshot+Strong   Managed-Agents API   Knowledge
+(human)    (H.264+audio)               (graph)      (on 📷 tap)
+ │           │             │              │              │              │                │
+ │  *H.264 + audio stream continuously to Live the whole session*       │                │
  │           │             │              │              │              │                │
  │ "ESP32    │             │              │              │              │                │
  │  can't    │             │              │              │              │                │
@@ -372,27 +381,32 @@ Operator   Live          Bridge        LangGraph    Dispatcher    Managed-Agents
  │  BQ79616  │             │              │              │              │                │
  │  — comm   │             │              │              │              │                │
  │  timeout."│             │              │              │              │                │
- │──A/V─────►│             │              │              │              │                │
- │           │ FrameTap samples a frame → state.latestFrame                              │
- │           │──transcript→│              │              │              │                │
+ │──A/V─────►│──transcript→│              │              │              │                │
  │           │──funcall───►│              │              │              │                │
- │           │ consult_    │──ToolCall───►│              │              │                │
- │           │ guild()     │              │              │              │                │
- │           │             │              │ PerceptionGate (attaches frame)              │
+ │           │ summon_     │──ToolCall───►│              │              │                │
+ │           │ guild()     │              │ PerceptionGate (no snapshot yet)             │
  │           │             │              │ SupervisorRouter                              │
  │           │             │              │  → summon: [@firmware,@signal,@power]        │
- │           │             │              │──summon────► │              │                │
- │           │             │              │              │──N parallel─►│ @firmware start│
- │           │             │              │              │  interactions│ @signal start  │
+ │           │             │              │──summon──────┼─────────────►│ @firmware start│
+ │           │             │              │              │  N parallel  │ @signal start  │
  │           │             │              │              │              │ @power start   │
  │  see chat │             │              │  ┌── SSE deltas streaming back ──┐           │
- │  panes    │◄─ChannelMsg─┤◄─chat-bus────┤◄─aggregator──┤              │                │
+ │  panes    │◄─ChannelMsg─┤◄─chat-bus────┤◄─aggregator──┼──────────────┤                │
  │  fill up  │             │              │              │              │                │
  │           │             │              │              │  @power: "BQ79616 needs a     │
  │           │             │              │              │   valid cell-stack present at │
  │           │             │              │              │   power-up." asks Knowledge ──┼──► lookup
  │           │             │              │              │              │ datasheet:     │ datasheet
  │           │             │              │              │              │ wake/stack req │◄──page
+ │           │             │              │              │              │                │
+ │ *taps 📷 for a sharp look at the wiring*                             │                │
+ │──JPEG────────────────────────────────►│ /v2/snapshot │              │                │
+ │           │             │              │──analyze────►│ strong model │                │
+ │           │             │              │              │ "only VIO is │                │
+ │           │             │              │◄─evidence────┤  wired; the  │                │
+ │           │             │              │ EvidenceRef +│  cell-stack  │                │
+ │           │             │              │ latestFrame  │  lead is     │                │
+ │           │             │              │ → #live-feed │  unplugged"  │                │
  │           │             │              │ MergeOpinion: consensus + disagreement       │
  │           │             │              │ DissentDetector: @firmware/@signal (comm)    │
  │           │             │              │   vs @power (missing stack voltage)          │
@@ -564,7 +578,7 @@ Tap on `#dissent` opens split view:
 │
 ├── inbox/                               ← per-invocation, fresh
 │   ├── context.json                     ← orchestrator's question + state
-│   ├── latest_frame.jpg                 ← written by FrameTap before invocation
+│   ├── latest_frame.jpg                 ← latest hi-res snapshot, if the operator took one
 │   └── recent_transcript.txt
 │
 └── output.json                          ← THE structured answer
@@ -577,7 +591,7 @@ Tap on `#dissent` opens split view:
                                          ←  function_calling yet — DEPENDS ON SPIKE 4)
 ```
 
-`latest_frame.jpg` is the FrameTap output (§2) — the exact pixels Gemini Live saw, not a separately-uploaded image.
+`latest_frame.jpg` is the most recent **snapshot** (§2) — a full-resolution still the operator captured on demand, already analyzed by the strong model. It is absent until the first 📷 tap; continuous vision lives with Gemini Live, not in the sandbox.
 
 ---
 
@@ -671,7 +685,8 @@ Named so the implementation stays simple and consistent. Each is referenced by t
 
 | Pattern | Where | Why |
 |---|---|---|
-| **Tee + Sampler** (FrameTap) | §2, `00 §4`, `01 §3.1` | One video source of truth; SME vision cadence decoupled from Live cadence without a second client channel. |
+| **Device-side capture fork** (one session, two outputs) | §1, `00 §4` | The device emits both encodings (H.264→Live, hi-res JPEG snapshot); the server never transcodes; one persistent socket across the fragile link. |
+| **On-demand escalation to a stronger model** (snapshot) | §2, `00 §4`, `05` | Cheap weak model always-on (Live); expensive strong model only when the operator asks for a sharp look. One-shot request/response, not a stream. |
 | **Single-writer state + reducer** | `01 §1` | `ForgeState.outboundEvents` is append-only via a reducer; one dispatcher drains it. No races over who emits. |
 | **Table-driven policy** | `03 §3` | The safety matrix is *data*, not branching code. `max(table_default, sme_declared)` for risk. Easy to audit and test. |
 | **HITL interrupt (checkpoint)** | `01 §3.7`, `03 §2` | LangGraph checkpoint = the human-confirmation pause. Replay reproduces the exact prompt the human saw. |
@@ -689,6 +704,6 @@ Named so the implementation stays simple and consistent. Each is referenced by t
 Two layers, mirroring the user-facing requirement that components work *and* integrate cleanly:
 
 - **Component-level tests** live inside each spec, in a `## Test cases` section: contract round-trips (`00`), per-node behavior (`01`), persona output validation (`02`), gate-matrix truth table (`03`), chat-bus framing (`04`), knowledge-lookup contracts (`05`).
-- **System-level / integration tests** live in `specs/08_test_plan.md`: cross-process flows that prove the contracts and endpoints align end-to-end (Live → FrameTap → graph → SMEs → chat bus → operator and back), plus the build-order execution gates and the demo flow run as a single integration test.
+- **System-level / integration tests** live in `specs/08_test_plan.md`: cross-process flows that prove the contracts and endpoints align end-to-end (always-on Live path; on-demand snapshot → strong model → guild evidence; graph → SMEs → chat bus → operator and back), plus the build-order execution gates and the demo flow run as a single integration test.
 
 Run order and CI gates: `08 §2`.

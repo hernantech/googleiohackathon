@@ -19,7 +19,10 @@ class ForgeState(TypedDict):
     userId: str | None
 
     # ── perception ──
-    latestFrame: FrameRef | None                  # set by the FrameTap (00 §4), read by PerceptionGate
+    latestFrame: FrameRef | None                  # the latest on-demand snapshot (00 §4.2);
+                                                   #   None until the operator taps 📷. Continuous
+                                                   #   vision lives with Gemini Live, not here.
+    latestSnapshot: SnapshotAnalysis | None        # strong-model analysis of latestFrame, if any
     latestTranscriptPartial: str | None
     latestTranscriptFinal: str | None
     boardProfileId: str | None                    # see 05 §2 board profile (the board under test)
@@ -127,7 +130,7 @@ ASCII edge labels match the conditional-edge function return values.
 
 **Input state delta**: one of
 - `Transcript(partial=False)` from Live
-- `FrameRef` published by the FrameTap (`00 §4`) — a frame sampled from the Live video stream, not a separate client upload
+- `SnapshotAnalysis` from the `SnapshotAnalyzer` (`00 §4.2`) — the operator tapped 📷; updates `latestFrame` + `latestSnapshot` and posts the analysis to `#live-feed`, so the next `summon_guild` carries it as evidence. (There is no continuous frame feed; Live owns continuous vision.)
 - `SafetyInterrupt` from `@sentinel` (bypasses to LiveSpeaker via priority bus)
 - `ChatMessage(authorKind=USER)` from chat (typed input)
 
@@ -399,7 +402,7 @@ orchestrator does. Your job:
 
 ### 4.1 SentinelSubgraph
 
-Runs in parallel as an `asyncio.Task` consuming the same `latestFrame` (FrameTap output) and `latestTranscriptFinal` from `ForgeState`. On hazard detection (smoke, hot iron near a live board, panicked user voice), emits a `SafetyInterrupt` event onto a priority bus that the LiveSpeaker AND the SafetyGate both subscribe to.
+Runs in parallel as an `asyncio.Task`. **Its continuous eyes are Gemini Live**, not a server-side frame feed: Live watches the always-on H.264 (`00 §4.1`) and the bridge surfaces vision cues (smoke, a hot iron over a live board) plus the voice transcript; `@sentinel` also sees any on-demand `SnapshotAnalysis` and `latestTranscriptFinal`. On hazard detection it emits a `SafetyInterrupt` event onto a priority bus that the LiveSpeaker AND the SafetyGate both subscribe to. (Continuous hazard vision is therefore best-effort via Live — there is no dedicated frame grab; an autonomous-snapshot watcher is explicitly out of scope, `00 §4.2`.)
 
 Authority to pre-empt voice: yes (see `03_safety_gate_matrix.md` §5). **Forge cannot power anything down** — there is no actuator. A `HALT` is a full-screen "POWER DOWN NOW" takeover plus a spoken command instructing the *human* to kill the PSU by hand, and it blocks all pending instruction cards until the human acks the hazard is cleared. A `WARN` is a sticky banner plus a spoken caution; the session continues.
 
@@ -483,7 +486,8 @@ Run: `pytest orchestrator/graph/tests/`. SMEs and Live are faked with determinis
 
 | ID | Node / edge | Test | Pass criterion |
 |---|---|---|---|
-| GR-1 | PerceptionGate | feed a `FrameRef` from a fake FrameTap → state updates `latestFrame`; emits a `CheckpointMarker` | `latestFrame` set; one marker emitted |
+| GR-1 | PerceptionGate | feed a `SnapshotAnalysis` (from a fake SnapshotAnalyzer) → state updates `latestFrame` + `latestSnapshot`; analysis posted to `#live-feed`; emits a `CheckpointMarker` | frame+snapshot set; posted; one marker |
+| GR-1b | PerceptionGate→Summon | take a snapshot, then `summon_guild` → the `SummonGuild.contextRefs` includes the snapshot `FrameRef` (evidence reaches SMEs) | evidence threaded in |
 | GR-2 | PerceptionGate | malformed transcript → logs + `Goodbye("perception_invalid")` only on that channel, graph survives | no exception escapes |
 | GR-3 | SupervisorRouter | utterance with `@power` mention → `pendingSummon.smes` contains `@power` (hard hint honored) | mention forced in |
 | GR-4 | SupervisorRouter | model returns bad JSON twice → falls back to `needs_guild=false`, routes to LiveSpeaker, logs `routing_failed` | fallback edge taken |
@@ -495,7 +499,7 @@ Run: `pytest orchestrator/graph/tests/`. SMEs and Live are faked with determinis
 | GR-10 | SafetyGate | `actor="operator"` step value > documented limit → DENY + `SafetyInterrupt(WARN)`, no card shown | denial path; limit cited |
 | GR-11 | SafetyGate | HIGH operator step within limit → emits `ConfirmationRequest` w/ `ActionCard.documentedLimit`; interrupt; resume `approved=True` → `approvedActions` appended, audit `operatorOutcome="done"` | full HITL round-trip |
 | GR-12 | SafetyGate | resume `approved=False` → step dropped, audit `operatorOutcome="skipped"` | skip path |
-| GR-13 | SentinelSubgraph | inject a hazard frame → `SafetyInterrupt(HALT)`; assert NO actuation call exists anywhere, only the takeover + power-down instruction events | no actuator invoked |
+| GR-13 | SentinelSubgraph | inject a hazard cue via the fake Live vision feed (not a frame grab) → `SafetyInterrupt(HALT)`; assert NO actuation call exists anywhere, only the takeover + power-down instruction events; assert no continuous frame-grab task is spawned | no actuator, no frame-grab |
 | GR-14 | Error envelope | force an exception inside MergeOpinion → graph emits `SafetyInterrupt(WARN, "internal error…")` and continues to LiveSpeaker | no fail-stop |
 | GR-15 | Checkpoint/replay | run to a SafetyGate interrupt, drop + reconnect same `sessionId` → pending `ConfirmationRequest` re-emitted, resume completes | replay reproduces the card |
 

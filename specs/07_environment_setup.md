@@ -37,9 +37,11 @@ FORGE_PROTOCOL_VERSION=2.0
 
 # ── Gemini ───────────────────────────────────────────────
 GEMINI_API_KEY=                             # unset → Live runs in stub mode (synthetic transcripts)
-GEMINI_LIVE_MODEL=gemini-2.0-flash-exp
+GEMINI_LIVE_MODEL=gemini-2.0-flash-exp      # always-on H.264+audio path (00 §4.1); weaker/real-time
 GEMINI_SME_MODEL=gemini-2.5-pro             # what each SME's sandbox is configured to use
 GEMINI_SENTINEL_MODEL=gemini-2.5-flash      # cheaper/faster for always-on watcher
+GEMINI_SNAPSHOT_MODEL=gemini-3-pro          # on-demand snapshot analysis (00 §4.2); strongest vision
+                                            #   unset → snapshot falls back to GEMINI_SME_MODEL
 
 # ── Managed Agents ───────────────────────────────────────
 MANAGED_AGENTS_API_KEY=                     # unset → SMEs run in stub mode (canned responses)
@@ -61,7 +63,7 @@ ALLOWED_DEV_TOKENS=forge-dev-shared-secret  # comma-separated
 
 # ── Board knowledge (read-only; no instruments) ──────────
 BOARD_PROFILE=~/.forge/board.yaml           # unset → empty profile; SafetyGate uses defaults below
-FRAME_TAP_FPS=3                             # FrameTap sample rate from the Live video (00 §4)
+SNAPSHOT_MAX_EDGE_PX=4096                   # client downscales hi-res snapshots to this before upload (00 §4.3)
 
 # ── Safety thresholds (defaults if board profile absent) ──
 SAFETY_DEFAULT_MAX_VOLTAGE_V=12.0           # forces 30 V cell-sim step to DENY → board.yaml MUST set J3
@@ -86,12 +88,13 @@ Set via gradle properties or BuildConfig:
 
 ```
 -PCHAT_WS_URL=wss://orchestrator.forge.ai/v2/chat
--PLIVE_WS_URL=wss://orchestrator.forge.ai/v2/live  # (channel B: audio + video)
+-PLIVE_WS_URL=wss://orchestrator.forge.ai/v2/live      # (channel B: always-on H.264 + audio)
+-PSNAPSHOT_URL=https://orchestrator.forge.ai/v2/snapshot # (F: one hi-res JPEG per 📷 tap)
 -PAUTH_TOKEN=forge-dev-shared-secret               # OR signed in via Firebase
 -PSESSION_ID=                                       # auto-generated if unset
 ```
 
-The client sends **two** streams only: the ChatBus WS (A) and the Live media WS (B, audio + video). It uploads **no separate frame channel** — the orchestrator's FrameTap samples frames from the Live video (`00 §4`). There is no bench-daemon client config because there is no bench daemon.
+**DeviceSource contract** (what every client — iPhone or Quest — must emit, so the orchestrator stays device-agnostic): from **one camera session with two outputs**, (1) an always-on **H.264 + audio** stream on the Live WS (B), and (2) a **hi-res JPEG** still POSTed to `/v2/snapshot` (F) on each 📷 tap. The device does all encoding; the orchestrator never transcodes. The iPhone implements this with AVFoundation (`AVCaptureVideoDataOutput`/movie + `AVCapturePhotoOutput`); Android/Quest with Camera2 (encoder surface + `ImageReader`). There is no bench-daemon client config because there is no bench daemon.
 
 ### 2.3 Fallback behavior summary
 
@@ -122,7 +125,7 @@ A full local run is **one process** (plus a one-shot pre-warm). There is no benc
 │  PORT 8080               │
 │  (FastAPI + LangGraph +  │
 │   GeminiLiveBridge +     │
-│   FrameTap +             │
+│   SnapshotAnalyzer +     │
 │   KnowledgeAdapter)      │
 └──────────────────────────┘
 ```
@@ -179,9 +182,12 @@ forge_v2/
 │   │   ├── renderer_hints.py
 │   │   └── tests/                  # CB-* framing tests (04 §13)
 │   ├── live/
-│   │   ├── bridge.py               # google-genai Live wrapper
-│   │   ├── frame_tap.py            # tee + sampler from Live video (00 §4)
+│   │   ├── bridge.py               # google-genai Live wrapper; passes H.264+audio (no decode)
 │   │   └── deferred_calls.py       # Spike 1 logic
+│   ├── snapshot/                   # on-demand hi-res path (00 §4.2)
+│   │   ├── endpoint.py             # POST /v2/snapshot
+│   │   ├── analyzer.py             # analyze_snapshot() → strong model → SnapshotAnalysis
+│   │   └── tests/                  # snapshot contract tests (00 §4.2)
 │   ├── managed_agents/
 │   │   ├── client.py               # wraps interactions.create + files
 │   │   ├── pool.py                 # Spike 2 branch B
@@ -252,8 +258,9 @@ forge_v2/
    - Load `BOARD_PROFILE` (`~/.forge/board.yaml`); assert it parses (BK-1).
    - Assert `get_documented_limit({target:"J3", kind:"net"})` returns the documented max (BK-2) — this is the value the demo's HIGH `set_psu` step is gated against. If it returns `found=false`, the 30 V step will be DENIED (`03 §6`), so fail pre-warm loudly.
 
-4. Validate Live + FrameTap:
-   - Open a throwaway Live session, send 1 s of silence + one test video frame, confirm a response within 3 s AND that the FrameTap emitted exactly one `FrameRef` for the frame.
+4. Validate Live + snapshot:
+   - Open a throwaway Live session, send 1 s of silence + a short H.264 segment, confirm a response within 3 s (and that the bridge forwarded it without decoding).
+   - POST a test JPEG to `/v2/snapshot`, confirm a `SnapshotAnalysis` comes back over the chat bus within ~4 s and `latestFrame` is set.
    - Close session.
 
 5. Run a synthetic full-graph dry-run with a canned transcript ("test, please summon @power about J3"):

@@ -20,7 +20,7 @@ Sec-WebSocket-Protocol: forge.chat.v2, bearer.<token>
 - `replayFrom` is optional; if absent, server replays the most recent N=200 chat messages.
 - Auth token rides in `Sec-WebSocket-Protocol` (see `00_wire_protocol.md` §8). Server-selected subprotocol is `forge.chat.v2`.
 
-Inside the WS, only the JSON channel is used. Audio AND video ride on the separate Gemini Live WS (channel B); the chat bus carries no binary frames and the client never uploads a separate frame stream — frames are tapped server-side from channel B (`00 §4`). Camera frames reach the UI only as `FrameRef` thumbnails/links inside `ChatMessage`s.
+Inside the WS, only the JSON channel is used. H.264 video + audio ride on the separate Gemini Live WS (channel B); the on-demand snapshot is a separate `POST /v2/snapshot` (`00 §4.2`). The chat bus carries no binary media. The snapshot result comes back over the chat bus as a `SnapshotAnalysis` card (a `ChatMessage` with `bodyContentType=application/json`); camera imagery reaches the UI only as `FrameRef` thumbnails/links inside those cards.
 
 ---
 
@@ -82,6 +82,7 @@ Every chat message arrives as a `ChatMessage` (`00 §2.1`). The renderer dispatc
 | `SafetyInterrupt` (WARN tier — HALT is a takeover, not a card) | yellow banner with reason + suggested recover actions chips | top of every channel (sticky 10s) |
 | `EvidenceRef` (rare standalone) | thumbnail or external-link chip | wherever requested |
 | `MergedOpinion` (from `MergeOpinion` node) | headline + supportingSmes chips + openQuestions list | `#actions` |
+| `SnapshotAnalysis` (from `SnapshotAnalyzer`, `00 §4.2`) | hi-res frame thumbnail + strong-model analysis (markdown) + citation chips; tapping the thumbnail opens the full image | `#live-feed` (mirror to the relevant SME channel if a summon used it) |
 
 Unknown `kind` → render as collapsed JSON with a "rendering not supported" notice. Forward-compatible.
 
@@ -288,5 +289,6 @@ Run: `pytest orchestrator/chat_bus/tests/`. Driven with an in-memory WS pair (no
 | CB-8 | Unknown `kind` in an `application/json` body → renders collapsed-JSON fallback, no exception | forward-compatible |
 | CB-9 | Auth/version: `Hello` with mismatched major `protocolVersion` → `ErrorEvent("protocol_mismatch")` then `Goodbye` + close | rejected cleanly |
 | CB-10 | Heartbeat: server `Ping` every 20 s; missing 2 `Pong`s → server marks WS dead | liveness works |
+| CB-11 | `SnapshotAnalysis` card: a `ChatMessage(application/json, body=SnapshotAnalysis)` → client parses it, renders the `FrameRef` thumbnail + analysis + cites; lands in `#live-feed` | card renders, no binary on the bus |
 
-CB-6 and CB-7 are the seams reused by the system-level UI-contract test `08 §3.3`.
+CB-6, CB-7, and CB-11 are the seams reused by the system-level UI-contract + snapshot tests (`08 §3.3`, `08 §3.5`).

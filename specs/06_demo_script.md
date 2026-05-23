@@ -31,7 +31,8 @@ Why this bug:
 | 2 | Board profile loaded (`~/.forge/board.yaml` = `bq79616-bringup-2026-05`) | eng B | `forge-orchestrator-cli board show` prints J3 max=30 V, preconditions |
 | 3 | All SME envs pre-warmed (07 §5) | eng A | `forge-orchestrator-cli sme status` shows all "warm" |
 | 4 | Phone client connected, all channels visible | eng A | `#power`, `#signal`, `#firmware`, `#sentinel`, `#dissent`, `#actions`, `#live-feed` visible |
-| 5 | Gemini Live session up, voice tested ("hello") | eng A | hear voice response within 2 s |
+| 5 | Gemini Live session up (H.264 + audio), voice tested ("hello") | eng A | hear voice response within 2 s |
+| 5b | 📷 snapshot button works end-to-end | eng A | tap → `SnapshotAnalysis` card appears in `#live-feed` within ~4 s with a strong-model description |
 | 6 | Bug staged: ESP32 flashed with the BQ79616 host sketch; VIO powered but cell-stack PSU OFF; ESP32 console shows "comm timeout" | eng B | console prints timeout; no cell reads |
 | 7 | Bench PSU + DMM + soldering station in camera frame, PSU output OFF | eng B | camera sees the bench clearly |
 | 8 | Chat-bus replay tested by reconnecting client | eng A | last 200 messages reload, InstructionCard reappears if pending |
@@ -54,7 +55,7 @@ Presenter picks up the phone, points the camera at the board and the ESP32 seria
 
 **On screen**:
 - `#live-feed` shows the transcript and "Consulting the guild on bq79616-comm-timeout…"
-- The FrameTap has already sampled the bench frame; `#power`, `#signal`, `#firmware`, `#librarian` begin streaming token deltas.
+- Gemini Live already has the always-on camera view; `#power`, `#signal`, `#firmware`, `#librarian` begin streaming token deltas.
 
 This is the money shot: multiple agents reasoning in parallel, visibly.
 
@@ -64,7 +65,9 @@ This is the money shot: multiple agents reasoning in parallel, visibly.
 
 **`@signal`** posts: "If it's the daisy-chain, COMH/COML integrity or termination could be the issue. I'd want to scope the comm lines during a read."
 
-**`@power`** posts (key moment): "Look at the bench — only the VIO supply is on. The BQ79616 needs a valid cell stack on its VC pins to wake. `lookup_board_doc` → datasheet §7 power-up. If the stack isn't applied, it never responds. The timeout is a symptom."
+**`@power`** posts (key moment): "Live's view suggests only the VIO supply is wired. The BQ79616 needs a valid cell stack on its VC pins to wake. `lookup_board_doc` → datasheet §7 power-up. If the stack isn't applied, it never responds. The timeout is a symptom — but I want a sharper look to be sure."
+
+**Snapshot beat (the stronger model earns its keep):** the presenter taps **📷** to get a crisp still of the board wiring. `POST /v2/snapshot` → the strong model (Gemini 3.x/4.x) returns a `SnapshotAnalysis` into `#live-feed`: *"Only the VIO header is connected; the cell-stack lead at J3 is unplugged"* — with a datasheet citation. This is the on-demand escalation: Live is good enough to suspect it; the strong model on a full-res still confirms it. The snapshot becomes evidence for the next round.
 
 **`@librarian`** (always-on, passive): pins the BQ79616 datasheet §7 page describing the power-up requirement and the wake-tone timing.
 
@@ -130,8 +133,9 @@ Compressed to a single arc: screen-record of the phone plus a wide shot of the b
 |---|---|
 | 0:00 | "ESP32 can't read the BQ79616 — comm timeout" — point at the board + console |
 | 0:08 | guild channels populate with deltas; `#dissent` lights up |
-| 0:20 | jump cut: `@power`'s "missing cell stack, comm is a symptom" on screen |
-| 0:30 | InstructionCard: "Set PSU to 30 V across J3 (board doc max 30 V)"; presenter turns the knob |
+| 0:18 | presenter taps 📷; strong-model `SnapshotAnalysis`: "cell-stack lead unplugged" |
+| 0:24 | jump cut: `@power`'s "missing cell stack, comm is a symptom" on screen |
+| 0:32 | InstructionCard: "Set PSU to 30 V across J3 (board doc max 30 V)"; presenter turns the knob |
 | 0:42 | presenter says "done"; sends `read_cells` |
 | 0:48 | ESP32 console streams 16 valid cell voltages into `#firmware` |
 | 0:54 | `@sentinel` "power down before rework" warning flashes |
@@ -139,7 +143,7 @@ Compressed to a single arc: screen-record of the phone plus a wide shot of the b
 
 Cuts removed from the live version: the second dissent round (show one pass), the `@librarian` datasheet pin, the VIO `probe_net`.
 
-What MUST stay in: the parallel-channel deliberation, the dissent moment, **one InstructionCard with a documented-limit citation and a voice "done"**, sentinel.
+What MUST stay in: the parallel-channel deliberation, the dissent moment, **the 📷 snapshot → strong-model confirmation**, **one InstructionCard with a documented-limit citation and a voice "done"**, sentinel.
 
 ---
 
@@ -187,8 +191,9 @@ What MUST stay in: the parallel-channel deliberation, the dissent moment, **one 
 | "What stops the SMEs from hallucinating a setpoint?" | "Two layers: every value-bearing instruction must cite a documented limit (`get_documented_limit`), and SafetyGate denies anything above it. No citation → it's downgraded to 'verify this yourself'." |
 | "Why LangGraph?" | "Native HITL interrupts for the confirmation pause, native checkpointing for replay (which we just demoed), and bounded conditional edges for the dissent loop." |
 | "Why Managed Agents?" | "Per-SME persistent sandboxes: scratchpad memory across turns, real code execution for analysis (rail-budget calc, OCR of the chip in frame), and AGENTS.md/SKILL.md customisation without server-side prompt management." |
-| "How does Gemini Live fit?" | "Voice + camera entrypoint. One media stream; we tap frames server-side so the SMEs see exactly what Live sees. `summon_guild` kicks off the guild; the answer reflects back through Live's voice." |
-| "Why is there no separate camera/frame upload?" | "The video already flows to the orchestrator on its way to Live. A second JPEG channel would just double the bandwidth and let the two streams drift. We tap and sample the one stream — single source of truth." |
+| "How does Gemini Live fit?" | "It's the always-on eyes and voice — H.264 + audio, real-time. `summon_guild` kicks off the guild; the answer reflects back through Live's voice." |
+| "Why two vision paths?" | "Different jobs. Live is always-on but a weaker model. When you need a sharp look — read a chip, confirm wiring — you tap 📷 and a full-res still goes to a stronger model (Gemini 3.x/4.x). Both encodings come off one camera session on the device, so the server never transcodes and only one socket stays open." |
+| "Does the snapshot slow things down?" | "It's a one-shot request, off the live path — the conversation keeps going while it returns. And it's optional: the guild can reason from Live alone." |
 | "What about latency?" | "Cold-start is our worst case; we pre-warm. Once warm, single-round deliberation is sub-5 s p95. (Spike 3 numbers as of demo: …)" |
 | "Could a real engineer trust this?" | "The audit trail is immutable in Firestore — every decision, every cited limit, every operator outcome is reproducible from the checkpoint. And the engineer's own hands and eyes are the final layer." |
 | "What if two SMEs deadlock?" | "DissentDetector bounces once and only once. After that, MergeOpinion presents both views as openQuestions for the human to decide." |

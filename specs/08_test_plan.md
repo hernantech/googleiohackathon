@@ -1,7 +1,7 @@
 # 08 — Test Plan & Execution Gates
 
 > Component-level tests live inside each spec (`00 §11`, `01 §8`, `02 §11`, `03 §10`, `04 §13`, `05 §8`). This file owns the **system level**: the build order and CI gates (the execution plan), the **cross-process integration tests** that prove the contracts and endpoints actually line up end-to-end, and the contract-alignment matrix that ties it all together.
-> Why this needs global context: every test here spans ≥2 components and asserts that what one side *emits* the other side *accepts and renders* — wire events, the FrameTap → state → SME path, the SafetyGate ↔ KnowledgeAdapter limit contract, the chat-bus ↔ client InstructionCard round trip, and the demo flow as one story.
+> Why this needs global context: every test here spans ≥2 components and asserts that what one side *emits* the other side *accepts and renders* — wire events, the two media paths (always-on H.264→Live and on-demand snapshot→strong model→evidence), the SafetyGate ↔ KnowledgeAdapter limit contract, the chat-bus ↔ client InstructionCard round trip, and the demo flow as one story.
 > Cross-refs: every other spec.
 
 ---
@@ -12,10 +12,10 @@
                  ┌───────────────────────────────────┐
                  │  §3.6  Demo flow (one big story)   │  1 scenario test
                  ├───────────────────────────────────┤
-                 │  §3.1–§3.5, §3.7–§3.8              │  ~12 integration tests
+                 │  §3.1–§3.5b, §3.7–§3.9            │  ~14 integration tests
                  │  cross-process: contracts align    │  (this file)
                  ├───────────────────────────────────┤
-                 │  WP-*/GR-*/SME-*/SG-*/CB-*/BK-*    │  ~65 component tests
+                 │  WP-*/GR-*/SME-*/SG-*/CB-*/BK-*    │  ~70 component tests
                  │  one component each (the specs)    │  (the other specs)
                  └───────────────────────────────────┘
 ```
@@ -35,15 +35,15 @@ Implement bottom-up; each phase's gate is the set of tests that MUST be green be
 
 | Phase | Build | Gate (must pass) | Rationale |
 |---|---|---|---|
-| **P0 — Contracts** | `proto/events.py` + Kotlin `AgentProto` + golden corpus | `WP-1…WP-10` + `§3.1` | Freeze the wire vocabulary first; everything downstream imports it. |
-| **P1 — Knowledge** | `KnowledgeAdapter` (board profile, lookups, limits) | `BK-1…BK-10` | SafetyGate and SMEs both depend on `get_documented_limit`; build it before either. |
+| **P0 — Contracts** | `proto/events.py` (incl. `SnapshotAnalysis`/`FrameRef`) + Kotlin `AgentProto` + golden corpus | `WP-1…WP-12` + `§3.1` | Freeze the wire vocabulary first; everything downstream imports it. |
+| **P1 — Knowledge** | `KnowledgeAdapter` (board profile, lookups, limits) | `BK-1…BK-11` | SafetyGate, SMEs, and the snapshot analyzer all depend on it; build it first. |
 | **P2 — Safety** | `safety/matrix.py` + `gate.py` (table-driven) | `SG-1…SG-12` (uses P1 limits) | Gate is pure/table-driven; testable without the graph. |
-| **P3 — Chat bus** | `chat_bus/ws.py` + channels + renderer | `CB-1…CB-10` | Client surface; decoupled from the graph via the Channel Bus. |
-| **P4 — Live + FrameTap** | `live/bridge.py` + `frame_tap.py` | `§3.5` (frame pipeline) | Proves the unified frame source before the graph consumes frames. |
+| **P3 — Chat bus** | `chat_bus/ws.py` + channels + renderer | `CB-1…CB-11` | Client surface; decoupled from the graph via the Channel Bus. |
+| **P4 — Live passthrough + Snapshot** | `live/bridge.py` (H.264 passthrough) + `snapshot/` (`endpoint.py`, `analyzer.py`) | `§3.5a`, `§3.5b` | Two media paths: prove H.264 passes through untouched (no transcode) and the on-demand snapshot → strong model → evidence works. |
 | **P5 — Graph** | nodes + subgraphs + checkpointer | `GR-1…GR-15` | Orchestration; depends on P0–P4 contracts. |
 | **P6 — Managed agents** | `client.py` + `pool.py` + `structured_output.py` | `SME-1…SME-8` + `§3.2` | SME round-trip + structured-output strategy chain. |
-| **P7 — Integration** | wire everything in `main.py` | `§3.1…§3.8` | Cross-process flows. |
-| **P8 — Demo** | scenario fixtures + `prewarm` | `§3.6` + `07 §5` dry-run | The 3-minute story runs green, doubles only. |
+| **P7 — Integration** | wire everything in `main.py` | `§3.1…§3.9` | Cross-process flows. |
+| **P8 — Demo** | scenario fixtures + `prewarm` | `§3.6` + `07 §5` dry-run | The 3-minute story (incl. the 📷 snapshot beat) runs green, doubles only. |
 
 CI (`pytest -m "not live"`) runs P0–P7 on every push; the gate for merge to `main` is all of P0–P7 green. The `@live` suite (`§5`) + `§3.6` run pre-demo (`06 §2`).
 
@@ -88,21 +88,37 @@ Location: `tests_integration/`. Each test below names the **components it spans*
 - **Pass**: all three branches; (c) proves Forge never executes.
 - **Builds on**: SG-2, SG-3, SG-6, BK-2, GR-10/GR-13.
 
-### 3.5 Frame pipeline (Live video → FrameTap → state → SME → @sentinel)
+### 3.5a Always-on media path (H.264 + audio → Live, no transcode)
 
-- **Spans**: `live/bridge.py`, `frame_tap.py`, `ForgeState`, SME `inbox/frame.jpg`, `SentinelSubgraph`.
-- **Proves**: the unified frame source works — frames reach the SMEs and sentinel from the *Live stream only*, and there is no separate client frame channel anywhere in the path.
-- **Method**: feed a synthetic Live video stream (30 frames) into the bridge; assert the FrameTap publishes `FrameRef`s at ≈`FRAME_TAP_FPS` (not 30), each a valid `FRAM`-header JPEG q≥70 ≤1920px; assert `state.latestFrame` updates; assert a summoned SME's `inbox/frame.jpg` equals the most-recent tapped frame; assert `@sentinel` receives it. Negative assertion: grep the client protocol + server connection layer for any frame-upload endpoint → none exists.
-- **Pass**: sampling rate correct; same bytes reach SME + sentinel; no second channel.
-- **Builds on**: WP-8, GR-1, SME-8.
+- **Spans**: `live/bridge.py`, the Live WS (B), the Connection Layer.
+- **Proves**: the device's H.264 + audio reaches Live untouched, exactly **one** persistent media socket exists, and the server never instantiates a video decoder/encoder.
+- **Method**: feed a synthetic H.264 + audio stream into the bridge; assert the bytes forwarded to the (faked) Live session are byte-identical to what arrived (pass-through, no re-encode); assert the orchestrator instantiates **no** video decoder/encoder (no transcode symbol on the path — mirrors WP-12); count open media sockets = 1. Drop the uplink mid-stream and reconnect → assert a **single** lifecycle resumes (no second feed to reconcile), and no half-open codec/handle is left.
+- **Pass**: pass-through verified; one socket; clean single-lifecycle reconnect; zero transcode.
+- **Builds on**: WP-12.
+
+### 3.5b On-demand snapshot path (POST → strong model → guild evidence)
+
+- **Spans**: `snapshot/endpoint.py`, `snapshot/analyzer.py`, `KnowledgeAdapter`, `FrameStore`, `PerceptionGate`, chat bus, `ParallelSummonSMEs`.
+- **Proves**: a 📷 tap escalates to the stronger model and the result becomes guild evidence — and the path is a stateless request/response that leaves nothing open.
+- **Method**: `POST /v2/snapshot` with a fixture BQ79616 JPEG → assert `202 {jobId}`; assert the JPEG lands in `FrameStore` with a valid `FRAM` header; assert `analyze_snapshot()` calls the (faked) strong model AND grounds via `KnowledgeAdapter` (cite present, mirrors BK-11); assert a `SnapshotAnalysis` card posts to `#live-feed`, `state.latestFrame`/`latestSnapshot` are set, and a subsequent `summon_guild` carries the snapshot `FrameRef` in `contextRefs` (reaches the SME's `inbox/`). Lifecycle: assert the request opens and closes — no persistent socket added (still 1 from §3.5a). Offline: with no `GEMINI_SNAPSHOT_MODEL`, assert graceful fallback to `GEMINI_SME_MODEL` (or a canned analysis), no crash.
+- **Pass**: stored + analyzed + grounded + surfaced + threaded into the next summon; no extra socket; degrades cleanly.
+- **Builds on**: WP-11, BK-11, CB-11, GR-1/GR-1b, SME-8.
 
 ### 3.6 The demo flow as one integration test (`06` scripted)
 
 - **Spans**: everything, doubles only.
 - **Proves**: the BQ79616 scenario runs start-to-finish and every contract holds in sequence.
-- **Method**: `test_demo_flow.py` scripts the `06 §3` beats with a transcript double and a scripted "operator": comm-timeout utterance → summon `[@firmware,@signal,@power]` → first-round deltas → `DissentReport` (@power vs @firmware/@signal) → cross-exam → converge on @power → `probe_net` (operator reports "3.28 V") → HIGH `set_psu(30 V)` InstructionCard (cites J3=30 V) → operator "done" → `serial_send("read_cells")` → operator reports 16 valid reads → `@sentinel` WARN on hot-iron frame → `publish_report` stub URL. Assert the ordered event stream matches a golden transcript (modulo timestamps/ULIDs).
-- **Pass**: ordered events match the golden; no `SafetyInterrupt(WARN, "internal error…")` anywhere; total wall-clock < 30 s with doubles.
-- **Builds on**: §3.1–§3.5.
+- **Method**: `test_demo_flow.py` scripts the `06 §3` beats with a transcript double and a scripted "operator": comm-timeout utterance → summon `[@firmware,@signal,@power]` → first-round deltas → **📷 snapshot → `SnapshotAnalysis` ("cell-stack lead unplugged") posts to `#live-feed` and becomes evidence** → `DissentReport` (@power vs @firmware/@signal) → cross-exam → converge on @power → `probe_net` (operator reports "3.28 V") → HIGH `set_psu(30 V)` InstructionCard (cites J3=30 V) → operator "done" → `serial_send("read_cells")` → operator reports 16 valid reads → `@sentinel` WARN on hot-iron cue → `publish_report` stub URL. Assert the ordered event stream matches a golden transcript (modulo timestamps/ULIDs).
+- **Pass**: ordered events match the golden; the snapshot evidence appears before the dissent resolves; no `SafetyInterrupt(WARN, "internal error…")` anywhere; total wall-clock < 30 s with doubles.
+- **Builds on**: §3.1–§3.5b.
+
+### 3.9 Device-source conformance (phone ↔ Quest, same contract)
+
+- **Spans**: the client capture layer (iOS + Android/Quest), the Connection Layer, `live/bridge.py`, `snapshot/endpoint.py`.
+- **Proves**: both clients emit the identical **DeviceSource contract** (`07 §2.2`), so the orchestrator pipeline is device-blind — you iterate on the phone and the Quest just conforms.
+- **Method**: a conformance harness drives the orchestrator with a recorded capture from each client type (`Hello(client="phone")`, `Hello(client="quest")`): assert each produces a valid always-on H.264+audio Live stream (16 kHz mono audio; monocular video — Quest sends one eye, not stereo) AND a `/v2/snapshot` POST of a JPEG within the size/format bounds (`00 §4.3`). Assert the orchestrator code has **no** `client`-typed branch in the media path (only cosmetic labeling). Optional `META` extras (Quest pose/gaze) are present-but-ignored, not required.
+- **Pass**: both clients pass the same contract suite; no device branch in the hot path.
+- **Builds on**: WP-11, §3.5a, §3.5b.
 
 ### 3.7 Graceful degradation / zero-config boot
 
@@ -134,10 +150,12 @@ The concrete "endpoints and contracts line up" check. Every cross-process contra
 | C4 | `ActionCard` / `ConfirmationRequest` ↔ `ConfirmationResponse` | SafetyGate | client InstructionCard + back | §3.3, CB-6, GR-11 |
 | C5 | `get_documented_limit(target,kind)` result | KnowledgeAdapter (`05 §3.3`) | SafetyGate (`03 §6`) | §3.4, SG-2/3, BK-2 |
 | C6 | operator-step `tool` verbs (`05 §5`) | SME `proposedActions` | matrix rows (`03 §3`) + client renderer | §3.4, BK-8 |
-| C7 | `FrameRef` from FrameTap | `live/frame_tap.py` (`00 §4`) | `PerceptionGate`, SME `inbox`, `@sentinel` | §3.5 |
+| C7a | always-on H.264 + audio (passed through, not transcoded) | client capture (`07 §2.2`) | `live/bridge.py` → Gemini Live | §3.5a |
+| C7b | `SnapshotAnalysis` / `FrameRef` from `/v2/snapshot` | `snapshot/analyzer.py` (`00 §4.2`) | `PerceptionGate`, SME `inbox`, chat bus | §3.5b, WP-11, CB-11 |
 | C8 | `ChannelList` roster | chat bus (`04 §2`) | client + SME registry (`02`, `07`) | §3.6, CB-1, SME-3 |
 | C9 | checkpoint + replay (`01 §5`, `04 §6`) | checkpointer | chat-bus reconnect | §3.8, CB-7, GR-15 |
 | C10 | stub/fallback contracts (`05 §6`, `07 §2.4`) | each adapter | whole system | §3.7, BK-7 |
+| C11 | DeviceSource contract (H.264+audio + snapshot), device-blind pipeline | phone + Quest clients (`07 §2.2`) | orchestrator media path | §3.9 |
 
 If a row has no green test, the contract is unverified — treat it as a release blocker for the demo.
 
@@ -146,10 +164,12 @@ If a row has no green test, the contract is unverified — treat it as a release
 ## 5. Test doubles & fixtures
 
 - **SME double**: a stub Managed-Agents env that returns a pre-registered `SmeResponse` (per `(sme, scenario)` key) and optionally streams it token-by-token. Covers the four structured-output cases (`§3.2`).
-- **Live double**: replays a scripted transcript + a synthetic video stream (a folder of JPEGs at a fixed cadence) into `GeminiLiveBridge`, so the FrameTap has real frames to sample (`§3.5`).
-- **Operator double**: a scripted responder that, given a `ConfirmationRequest`, replies `approved=True/False` after a configurable delay and optionally injects a spoken reading ("VIO is 3.28 volts") back into the transcript.
+- **Live double**: replays a scripted transcript + a synthetic H.264 segment into `GeminiLiveBridge` and records exactly what is forwarded to the (faked) Live session, so `§3.5a` can assert byte-for-byte pass-through and zero transcode.
+- **Snapshot double**: a fixture JPEG (`testdata/snapshot/bq79616_board.jpg`) + a faked strong model returning a canned `SnapshotAnalysis` with a grounded cite, for `§3.5b`/`§3.6`.
+- **Operator double**: a scripted responder that, given a `ConfirmationRequest`, replies `approved=True/False` after a configurable delay, taps 📷 on cue (POSTs the fixture JPEG), and optionally injects a spoken reading ("VIO is 3.28 volts") back into the transcript.
 - **KnowledgeAdapter fixture**: `tests_integration/fixtures/board.yaml` = the `bq79616-bringup-2026-05` profile (J3 max 30 V, preconditions) + a canned datasheet table.
-- **Golden corpus**: `testdata/wire/*.json` (one per `AgentEvent` variant) — the single source of truth for `WP-6` and `§3.1`.
+- **Device-conformance recordings**: `testdata/device/{phone,quest}.capture` — a recorded H.264+audio segment and a snapshot POST per client type, for `§3.9`.
+- **Golden corpus**: `testdata/wire/*.json` (one per `AgentEvent` variant + `SnapshotAnalysis`) — the single source of truth for `WP-6` and `§3.1`.
 - **Golden transcript**: `testdata/demo/bq79616_golden.jsonl` — the expected ordered event stream for `§3.6`.
 
 `@live` marker: tests that hit real Gemini Live / real Managed Agents / real Vertex Search. Excluded from CI; run nightly and in the `06 §2` pre-demo checklist.
@@ -162,7 +182,8 @@ If a row has no green test, the contract is unverified — treat it as a release
 |---|---|---|
 | Warm single-round deliberation latency | p95 < 5 s | `§3.6` with `@live` SMEs, timed (Spike 3) |
 | Chat-bus backpressure | drops `ChannelUpdate` before `ChatMessage`; never blocks the graph | CB-5 + a flood variant of `§3.3` |
-| FrameTap overhead | sampling adds < 50 ms p95 to the Live forward path; no frame backlog | `§3.5` timed |
+| Live pass-through overhead | forwarding H.264 adds < 10 ms p95 (no decode); exactly one media socket | `§3.5a` timed |
+| Snapshot round-trip | p95 < 4 s tap→`SnapshotAnalysis` (`@live` strong model); off the live path (doesn't stall the conversation) | `§3.5b` timed |
 | Zero-config boot time | < 5 s to healthz | `§3.7` |
 | Demo API spend | < $50 for a full rehearsal day | cost counter in metrics (`07 §9`) |
 
@@ -172,5 +193,6 @@ If a row has no green test, the contract is unverified — treat it as a release
 
 - **Hardware-in-the-loop.** There is no hardware to drive; the operator is a human (a double in tests). The closest analog is the operator-double reporting outcomes (`§5`).
 - **Instrument drivers.** Deleted with the bench daemon.
-- **A second frame-upload path.** It does not exist by design; `§3.5` asserts its *absence* rather than testing it.
+- **Server-side video transcode.** It does not exist by design (the device emits both encodings); `§3.5a` asserts the *absence* of any decoder/encoder on the path rather than testing one.
+- **A continuous server-side frame feed / autonomous snapshotting.** Out of scope; the only snapshot trigger shipped is the 📷 button (`00 §4.2`). `§3.5b` and `GR-13` assert no continuous frame-grab task exists.
 - **SME internal tool calls** (sandbox file IO, code exec) — internal to Managed Agents, never on our wire (`00 §10`); we test only the `SmeResponse` they produce.
