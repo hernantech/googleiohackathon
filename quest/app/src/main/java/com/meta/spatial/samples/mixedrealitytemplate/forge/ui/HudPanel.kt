@@ -32,7 +32,7 @@ fun HudPanel(session: SessionState) {
     val conn by session.connection.collectAsState()
     val transcript by session.transcript.collectAsState()
     val tools by session.toolCalls.collectAsState()
-    val live by session.liveActive.collectAsState()
+    val livePhase by session.livePhase.collectAsState()
 
     Column(
         modifier =
@@ -47,9 +47,14 @@ fun HudPanel(session: SessionState) {
             Box(dot)
             Spacer8()
             ForgeLabel("FORGE · $label", ForgeTheme.primaryText)
-            if (live) {
-                Spacer8()
-                ForgeLabel("● LIVE", ForgeTheme.riskHigh)
+            when (livePhase) {
+                com.meta.spatial.samples.mixedrealitytemplate.forge.net.LivePhase.LIVE -> {
+                    Spacer8(); ForgeLabel("● LIVE", ForgeTheme.riskHigh)
+                }
+                com.meta.spatial.samples.mixedrealitytemplate.forge.net.LivePhase.CONNECTING -> {
+                    Spacer8(); ForgeLabel("● connecting…", ForgeTheme.accentIC)
+                }
+                else -> {}
             }
         }
 

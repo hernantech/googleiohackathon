@@ -66,9 +66,12 @@ class OrchestratorSocket(
         )
     val events: SharedFlow<ForgeMsg> = _events.asSharedFlow()
 
+    // No OkHttp pingInterval: the server can stall its single worker for tens of
+    // seconds (Gemini Live connect / graph runs), which made the 20s ping-timeout
+    // false-disconnect the feed. Liveness rides on the server's app-level Ping
+    // (answered with Pong) + reconnect-on-failure.
     private val http: OkHttpClient =
         OkHttpClient.Builder()
-            .pingInterval(20, TimeUnit.SECONDS) // TCP-level keepalive
             .readTimeout(0, TimeUnit.MILLISECONDS) // sockets stay open
             .build()
 

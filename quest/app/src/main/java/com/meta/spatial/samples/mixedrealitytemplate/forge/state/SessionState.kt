@@ -2,6 +2,7 @@ package com.meta.spatial.samples.mixedrealitytemplate.forge.state
 
 import android.util.Log
 import com.meta.spatial.samples.mixedrealitytemplate.forge.camera.PassthroughCapture
+import com.meta.spatial.samples.mixedrealitytemplate.forge.net.LivePhase
 import com.meta.spatial.samples.mixedrealitytemplate.forge.net.LiveSocket
 import com.meta.spatial.samples.mixedrealitytemplate.forge.net.OrchestratorSocket
 import com.meta.spatial.samples.mixedrealitytemplate.forge.net.SnapshotUploader
@@ -61,8 +62,9 @@ class SessionState(
     private val _snapshotInFlight = MutableStateFlow(false)
     val snapshotInFlight: StateFlow<Boolean> = _snapshotInFlight.asStateFlow()
 
-    /** Gemini Live duplex session active (mic + JPEG out, TTS back). */
-    val liveActive: StateFlow<Boolean> = liveSocket?.active ?: MutableStateFlow(false).asStateFlow()
+    /** Gemini Live duplex phase: IDLE → CONNECTING → LIVE. */
+    val livePhase: StateFlow<LivePhase> =
+        liveSocket?.phase ?: MutableStateFlow(LivePhase.IDLE).asStateFlow()
 
     /** Set by the activity; invoked to request camera+mic perms in-VR on first use. */
     var onRequestCameraPermission: (() -> Unit)? = null
@@ -140,12 +142,12 @@ class SessionState(
             onRequestCameraPermission?.invoke()
             return
         }
-        if (live.active.value) {
+        if (live.phase.value != LivePhase.IDLE) {
             live.stop()
             systemLine("Live session ended.")
         } else {
             live.start()
-            systemLine("🎙 Live — talk to Forge; the guild is watching and listening.")
+            systemLine("🎙 Connecting Live — talk to Forge once it goes red.")
         }
     }
 

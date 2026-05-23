@@ -149,7 +149,7 @@ private fun JsonCard(body: String) {
 @Composable
 private fun QuickPrompts(session: SessionState) {
     val snapping by session.snapshotInFlight.collectAsState()
-    val live by session.liveActive.collectAsState()
+    val phase by session.livePhase.collectAsState()
     // No @mention — Gemini's server-side classifier routes to the right agents.
     val presets =
         listOf(
@@ -159,16 +159,24 @@ private fun QuickPrompts(session: SessionState) {
         )
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         // 🎙 Gemini Live duplex — voice + camera in, Gemini orchestrates the guild.
+        val (liveColor, liveText) =
+            when (phase) {
+                com.meta.spatial.samples.mixedrealitytemplate.forge.net.LivePhase.LIVE ->
+                    ForgeTheme.riskHigh to "⏹ Live"
+                com.meta.spatial.samples.mixedrealitytemplate.forge.net.LivePhase.CONNECTING ->
+                    ForgeTheme.accentIC to "🎙 connecting…"
+                else -> ForgeTheme.riskLow to "🎙 Go Live"
+            }
         Button(
             onClick = { session.toggleLive() },
             colors =
                 ButtonDefaults.buttonColors(
-                    containerColor = if (live) ForgeTheme.riskHigh.copy(alpha = 0.30f) else ForgeTheme.riskLow.copy(alpha = 0.22f),
-                    contentColor = if (live) ForgeTheme.riskHigh else ForgeTheme.riskLow,
+                    containerColor = liveColor.copy(alpha = 0.26f),
+                    contentColor = liveColor,
                 ),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 2.dp),
         ) {
-            Text(if (live) "⏹ Live" else "🎙 Go Live", fontSize = ForgeTheme.caption.size)
+            Text(liveText, fontSize = ForgeTheme.caption.size)
         }
         // 📷 snapshot → /v2/snapshot; analysis returns as a card in #live-feed.
         Button(
