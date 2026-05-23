@@ -143,6 +143,48 @@ def test_tool_rounds_are_capped(monkeypatch):
     assert resp.claim == "capped."
 
 
+# ─────────── streaming: each tool call is surfaced AS IT HAPPENS ───────────
+
+def test_on_tool_call_fires_per_retrieval_in_order(monkeypatch):
+    """real_summon_one threads an `on_tool_call` sink through the tool loop: it
+    is invoked once per executed tool call, in order, with {name, args, result}
+    — this is what the graph streams to the SME's chat channel live."""
+    tool_turns = [
+        [("lookup_datasheet", {"part": "BQ79616", "query": "VIO"})],
+        [("get_documented_limit", {"target": "J3", "kind": "net"})],
+    ]
+    final = json.dumps({"confidence": 0.8, "claim": "ok.", "rationale": "r"})
+    fake = _FakeClient(tool_turns, final)
+    monkeypatch.setattr(gs, "_genai", lambda: fake)
+
+    seen: list[dict] = []
+    resp = gs.real_summon_one(
+        "@power", _summon("VIO?"), knowledge=KnowledgeAdapter(),
+        on_tool_call=seen.append,
+    )
+
+    # one callback per executed tool call, in order, each carrying name/args/result
+    assert [c["name"] for c in seen] == ["lookup_datasheet", "get_documented_limit"]
+    assert seen[0]["args"] == {"part": "BQ79616", "query": "VIO"}
+    assert "result" in seen[0] and "result" in seen[1]
+    assert resp.claim == "ok."
+
+
+def test_on_tool_call_sink_raising_does_not_break_the_loop(monkeypatch):
+    """A bad streaming sink must never fail-stop the SME turn (01 §7)."""
+    tool_turns = [[("lookup_board_doc", {"query": "x"})]]
+    final = json.dumps({"confidence": 0.6, "claim": "survived.", "rationale": "r"})
+    fake = _FakeClient(tool_turns, final)
+    monkeypatch.setattr(gs, "_genai", lambda: fake)
+
+    def boom(_call):
+        raise RuntimeError("sink blew up")
+
+    resp = gs.real_summon_one(
+        "@power", _summon("b"), knowledge=KnowledgeAdapter(), on_tool_call=boom)
+    assert resp.claim == "survived."  # loop completed despite the bad sink
+
+
 # ─────────── citations come from get_documented_limit, not the model ───────
 
 def test_proposed_action_citation_comes_from_orchestrator(monkeypatch):

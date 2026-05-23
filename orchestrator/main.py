@@ -74,11 +74,56 @@ def get_ctx(session_id: str, user_id: str | None = None) -> SessionCtx:
 
 def _drain_to_bus(state: ForgeState) -> None:
     """Publish + clear the graph's outbound events (ChatMessages, cards,
-    ConfirmationRequests, CheckpointMarkers) to all subscribed sessions."""
-    if state.outboundEvents:
-        events = list(state.outboundEvents)
-        state.outboundEvents.clear()
+    ConfirmationRequests, CheckpointMarkers) to all subscribed sessions.
+
+    IDEMPOTENT vs. streaming: any event already pushed to the per-session
+    incremental sink during the run (state.streamedEvents — the summon notice,
+    per-SME claims, per-tool-call activity) is skipped here so it is published
+    exactly once. Only the not-yet-streamed remainder (consensus card, dissent,
+    LiveSpeaker transcript, checkpoints) is drained at the end."""
+    events = _take_undrained(state)
+    if events:
         bus.publish_many(events)
+
+
+def _take_undrained(state: ForgeState) -> list:
+    """Pop the not-yet-streamed remainder out of state.outboundEvents (clearing
+    the buffer + the streamed-id set). Pure / no I/O so it is safe to call from
+    a worker thread; the caller decides how to publish (directly, or marshalled
+    back onto the event loop — see _make_loop_publisher)."""
+    if not state.outboundEvents:
+        return []
+    streamed = state.streamedEvents
+    events = [e for e in state.outboundEvents if id(e) not in streamed]
+    state.outboundEvents.clear()
+    streamed.clear()
+    return events
+
+
+def _make_loop_publisher(loop: asyncio.AbstractEventLoop):
+    """Build a thread-safe (sink, drain) pair bound to `loop` for a run executed
+    via asyncio.to_thread.
+
+    The graph (worker thread) produces events; WebSocketTransport.send enqueues
+    onto a per-session asyncio.Queue whose put_nowait is loop-affine and NOT
+    thread-safe. So every bus.publish is marshalled back onto `loop` via
+    call_soon_threadsafe — which both keeps the queue consistent AND wakes the
+    writer coroutine so it flushes incrementally as each event arrives.
+
+    Returns:
+      emit:  the GraphDeps.emit sink (one event → published on the loop).
+      drain: publishes the not-yet-streamed remainder on the loop (idempotent;
+             mirrors _drain_to_bus but loop-safe from a worker thread).
+    """
+    def emit(event: object) -> None:
+        loop.call_soon_threadsafe(bus.publish, event)
+
+    def drain(state: ForgeState) -> None:
+        events = _take_undrained(state)
+        if events:
+            loop.call_soon_threadsafe(bus.publish_many, events)
+
+    return emit, drain
 
 
 def _auth_subprotocol(ws: WebSocket) -> tuple[bool, str | None]:
@@ -170,13 +215,24 @@ async def chat(ws: WebSocket) -> None:
             kind = data.get("kind")
 
             if kind == "ChatMessage":
-                ctx.engine.run(ctx.state, data.get("body", ""))
-                _drain_to_bus(ctx.state)
+                # Run the synchronous GraphEngine in a worker thread so the
+                # writer task gets loop time to FLUSH queued events as the
+                # deliberation unfolds (otherwise a sync run blocks the loop and
+                # every streamed frame arrives in one burst at the end). The
+                # loop-bound sink marshals each publish back onto the loop
+                # (asyncio.Queue.put_nowait is not thread-safe).
+                emit, drain = _make_loop_publisher(asyncio.get_running_loop())
+                body = data.get("body", "")
+                await asyncio.to_thread(
+                    lambda: ctx.engine.run(ctx.state, body, emit=emit))
+                drain(ctx.state)
             elif kind == "ConfirmationResponse":
                 resp = ConfirmationResponse(**{k: v for k, v in data.items() if k != "kind"})
-                ctx.engine.resume(ctx.state, resp)
+                emit, drain = _make_loop_publisher(asyncio.get_running_loop())
+                await asyncio.to_thread(
+                    lambda: ctx.engine.resume(ctx.state, resp, emit=emit))
                 bus.resolve_confirmation(resp.callId)
-                _drain_to_bus(ctx.state)
+                drain(ctx.state)
             elif kind == "Pong":
                 bus.on_pong(session_id, Pong(nonce=data.get("nonce", "")))
             elif kind == "Hello":
@@ -251,8 +307,13 @@ def _make_live_graph_hooks(session_id: str):
 
     async def on_transcript(transcript: str) -> str | None:
         # ARCHITECTURE §2/§4: a final Live transcript drives the main pipeline.
-        result = await asyncio.to_thread(ctx.engine.run, ctx.state, transcript)
-        _drain_to_bus(ctx.state)
+        # The engine runs in a worker thread; the loop-bound sink marshals each
+        # publish back onto the loop so streamed deliberation flushes AS IT
+        # HAPPENS (asyncio.Queue.put_nowait is not thread-safe).
+        emit, drain = _make_loop_publisher(asyncio.get_running_loop())
+        result = await asyncio.to_thread(
+            lambda: ctx.engine.run(ctx.state, transcript, emit=emit))
+        drain(ctx.state)
         # Voice the LiveSpeaker line back through Live (the spoken summary).
         return ctx.state.liveSpeakerScript if result.status != "paused" else None
 
@@ -260,9 +321,10 @@ def _make_live_graph_hooks(session_id: str):
         # A Live function-call (e.g. summon_guild) drives the guild deliberation;
         # the structured result is injected back as a function-response (00 §3).
         transcript = str(args.get("topic") or args.get("text") or name)
+        emit, drain = _make_loop_publisher(asyncio.get_running_loop())
 
         def _run() -> dict:
-            ctx.engine.run(ctx.state, transcript)
+            ctx.engine.run(ctx.state, transcript, emit=emit)
             merged = ctx.state.mergedOpinion
             return {
                 "tool": name,
@@ -271,7 +333,7 @@ def _make_live_graph_hooks(session_id: str):
             }
 
         payload = await asyncio.to_thread(_run)
-        _drain_to_bus(ctx.state)
+        drain(ctx.state)
         return payload
 
     return on_transcript, on_tool_call

@@ -57,6 +57,13 @@ class GraphDeps:
     dissent_fn: Callable[[list[SmeResponse], int], DissentResult]
     #: invoker resolution for a SmeResponse (defaults to its smeId).
     aggregator_queue_max: int = 64
+    #: Incremental publish sink: called with each outbound event AS IT IS
+    #: produced during a run (summon notice, per-SME claim, per-tool-call
+    #: activity). Default no-op keeps the graph fully deterministic + offline:
+    #: tests inject a list-sink, main.py injects a per-session bus.publish.
+    #: Streamed events are still appended to state.outboundEvents; the final
+    #: drain is idempotent (see GraphEngine._emit / ForgeState.streamedEvents).
+    emit: Callable[[object], None] = lambda _event: None
 
 
 @dataclass
@@ -82,6 +89,10 @@ class ForgeState:
     # output
     liveSpeakerScript: str | None = None
     outboundEvents: list = field(default_factory=list)
+    #: id()s of events already pushed to the incremental sink (GraphDeps.emit),
+    #: so the final drain can skip them and never double-publish (idempotent
+    #: drain). Populated by GraphEngine._emit; read by main._drain_to_bus.
+    streamedEvents: set[int] = field(default_factory=set)
     errors: list[str] = field(default_factory=list)
 
 

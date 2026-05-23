@@ -18,6 +18,7 @@ import functools
 import json
 import logging
 import os
+from typing import Callable
 
 from orchestrator.graph.state import DissentResult, GraphDeps, RouteDecision
 from orchestrator.knowledge import KnowledgeAdapter
@@ -293,6 +294,7 @@ def _dispatch_tool(name: str, args: dict, knowledge: KnowledgeAdapter) -> dict:
 
 def _run_sme_tool_loop(
     system: str, brief: str, siblings: list[str], knowledge: KnowledgeAdapter | None,
+    on_tool_call: "Callable[[dict], None] | None" = None,
 ) -> tuple[dict, list[dict]]:
     """Bounded function-calling loop on gemini-3.5-flash, returning the parsed
     final SmeResponse dict and the list of tool calls made (for audit/report).
@@ -302,7 +304,11 @@ def _run_sme_tool_loop(
     append the functionResponse turn, and loop (capped at SME_MAX_TOOL_ROUNDS).
     Once the model stops calling tools (or the cap is hit) we make one final
     forced-JSON call to extract the SmeResponse — keeping the structured-output
-    contract that AFC-with-JSON cannot satisfy in a single call."""
+    contract that AFC-with-JSON cannot satisfy in a single call.
+
+    `on_tool_call`, when given, is invoked with each {name, args, result} dict
+    the moment the call executes — so the graph can stream retrieval activity to
+    the SME's chat channel live (engine._parallel_summon)."""
     from google.genai import types  # optional [live] dep
 
     final_instructions = (
@@ -362,7 +368,15 @@ def _run_sme_tool_loop(
             args = dict(fc.args or {})
             knowledge_for_call = knowledge or KnowledgeAdapter()
             result = _dispatch_tool(fc.name, args, knowledge_for_call)
-            tool_calls.append({"name": fc.name, "args": args, "result": result})
+            call = {"name": fc.name, "args": args, "result": result}
+            tool_calls.append(call)
+            # Surface this retrieval to the SME's channel the moment it runs
+            # (streaming); a raising sink must not break the loop (01 §7).
+            if on_tool_call is not None:
+                try:
+                    on_tool_call(call)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("on_tool_call sink raised (%s); continuing", e)
             resp_parts.append(
                 types.Part.from_function_response(name=fc.name, response={"result": result})
             )
@@ -380,7 +394,12 @@ def _run_sme_tool_loop(
     return _loads(getattr(final, "text", None)), tool_calls
 
 
-def real_summon_one(sme_id: str, summon: SummonGuild, knowledge: KnowledgeAdapter | None = None) -> SmeResponse:
+def real_summon_one(
+    sme_id: str,
+    summon: SummonGuild,
+    knowledge: KnowledgeAdapter | None = None,
+    on_tool_call: "Callable[[dict], None] | None" = None,
+) -> SmeResponse:
     """Summon one SME as a bounded tool-calling agent on gemini-3.5-flash (not
     the ~70s-cold Antigravity sandbox; see ROADMAP). The persona is the system
     instruction and the orchestrator-assembled `summon.briefing` (question +
@@ -402,7 +421,7 @@ def real_summon_one(sme_id: str, summon: SummonGuild, knowledge: KnowledgeAdapte
             "stay strictly in your lane."
         )
         brief = summon.briefing or f"Topic: {summon.topic}"
-        d, _tool_calls = _run_sme_tool_loop(system, brief, siblings, knowledge)
+        d, _tool_calls = _run_sme_tool_loop(system, brief, siblings, knowledge, on_tool_call)
         conf = min(max(float(d.get("confidence", 0.5)), 0.0), 1.0)
         claim = str(d.get("claim", "")).strip() or f"{sme_id}: (no claim)"
         return SmeResponse(
