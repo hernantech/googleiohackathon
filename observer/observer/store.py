@@ -233,6 +233,94 @@ class Store:
             rows = cur.execute(sql, params).fetchall()
         return [r["session_id"] for r in rows]
 
+    def session_last_activity(self) -> dict[str, int]:
+        """Map of session_id → most-recent ``received_ms`` across ALL events,
+        regardless of age. Lets the overview mark every persisted operator
+        live/stale without dropping the old ones."""
+        with self._cursor() as cur:
+            rows = cur.execute(
+                "SELECT session_id, MAX(received_ms) AS last_ms FROM events "
+                "WHERE session_id IS NOT NULL GROUP BY session_id"
+            ).fetchall()
+        return {r["session_id"]: int(r["last_ms"]) for r in rows}
+
+    def session_event_count(self, session_id: str) -> int:
+        with self._cursor() as cur:
+            return int(
+                cur.execute(
+                    "SELECT COUNT(*) AS c FROM events WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone()["c"]
+            )
+
+    def events_page(
+        self,
+        *,
+        limit: int = 100,
+        before_id: int | None = None,
+        session_id: str | None = None,
+        kinds: tuple[str, ...] | None = None,
+        text: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Keyset-paginated firehose, newest-first, since the beginning of the DB.
+
+        Pages are keyed on the monotonic ``id`` (not time) so pagination is
+        stable even when ``received_ms`` ties: pass the smallest ``id`` from the
+        previous page as ``before_id`` to fetch the next (older) page. Optional
+        filters: ``session_id``, ``kinds`` (IN list), and a case-insensitive
+        ``text`` substring match over summary + raw_json (full firehose search).
+        """
+        clauses, params = [], []
+        if before_id is not None:
+            clauses.append("id < ?")
+            params.append(before_id)
+        if session_id is not None:
+            clauses.append("session_id = ?")
+            params.append(session_id)
+        if kinds:
+            placeholders = ",".join("?" for _ in kinds)
+            clauses.append(f"kind IN ({placeholders})")
+            params.extend(kinds)
+        if text:
+            clauses.append("(summary LIKE ? OR raw_json LIKE ? OR author_id LIKE ?)")
+            like = f"%{text}%"
+            params.extend([like, like, like])
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        sql = (
+            "SELECT id, ts_ms, received_ms, kind, session_id, channel_id, "
+            "author_id, call_id, summary, raw_json FROM events"
+            f"{where} ORDER BY id DESC LIMIT ?"
+        )
+        params.append(limit)
+        with self._cursor() as cur:
+            rows = cur.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def session_events(
+        self, session_id: str, *, limit: int = 1000, before_id: int | None = None
+    ) -> list[dict[str, Any]]:
+        """The FULL event history for one session (all kinds, no interesting-set
+        filter), newest-first, keyset-paginated by ``id`` for deep drill-down."""
+        return self.events_page(
+            limit=limit, before_id=before_id, session_id=session_id
+        )
+
+    def event_kinds(self) -> list[str]:
+        """Distinct event kinds present in the DB (for the filter dropdown)."""
+        with self._cursor() as cur:
+            rows = cur.execute(
+                "SELECT DISTINCT kind FROM events ORDER BY kind"
+            ).fetchall()
+        return [r["kind"] for r in rows]
+
+    def kind_counts(self) -> dict[str, int]:
+        """Count of persisted rows per kind — surfaces the firehose breakdown."""
+        with self._cursor() as cur:
+            rows = cur.execute(
+                "SELECT kind, COUNT(*) AS c FROM events GROUP BY kind ORDER BY c DESC"
+            ).fetchall()
+        return {r["kind"]: int(r["c"]) for r in rows}
+
     def all_status(self) -> list[dict[str, Any]]:
         with self._cursor() as cur:
             rows = cur.execute(
