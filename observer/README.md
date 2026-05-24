@@ -26,12 +26,16 @@ progress?* So the view surfaces only the highest-signal things:
 | **Attention flags** — `safety_halt`, `safety_warn`, `repeated_dissent`, `stuck_confirmation`, `long_pause` | The triage signal. Flagged cards float to the top and turn red. These are **computed deterministically** (not by the LLM) so they're reliable even if the model is down or wrong. |
 | **Pending confirmations + how long they've been waiting** (a global alert bar *and* per-card) | The "operator stuck?" signal. We surface **age**, not just count — a HIGH-risk confirmation sitting unanswered for 4 min is the thing a manager should walk over for. |
 | **SMEs consulted + their key finding** (highest-confidence claim each) | Shows which experts weighed in and what they concluded — e.g. `@power 91% — possible short near U4`. |
-| **Click a card → timeline drawer** | Drill-down: the ordered steps / consults / safety events for that session, for when the headline isn't enough. |
+| **Click a card → timeline drawer** | Drill-down: the ordered steps / consults / safety events for that session, with a **"Full history"** toggle that shows EVERY persisted event for the session (all kinds, paginated) + per-event raw-JSON. |
+| **"All events" tab** | The complete firehose — every persisted event since the start of the DB, filterable by kind / session / free-text, keyset-paginated, each row expandable to its raw JSON. Plus a per-kind count breakdown. Nothing in the DB is invisible from the browser. |
+| **Offline operators are kept, never dropped** | A session whose newest event is older than the 1-hour recent window stays listed (greyed, marked offline) so its distilled status is always reachable. The header shows `online / total`. |
 
-What we **deliberately left out** to keep it minimal: raw audio, partial ASR,
-ping/pong heartbeats, full message bodies in the main grid, per-channel chat
-rendering. None of that helps a manager triage; all of it is noise. (Audio and
-heartbeats aren't even persisted.)
+What we **deliberately left out** of the at-a-glance grid (but still persist +
+expose under "All events"): raw audio, partial ASR, ping/pong heartbeats, and the
+per-reconnect replay envelopes (`ChannelList`/`ReplayDone`/`BackpressureNotice`)
+are **never persisted** — they're pure noise with no stable id. Everything else
+the bus emits IS persisted and IS visible in the firehose view, even if it's too
+low-signal for the manager grid (e.g. streaming `ChannelUpdate` token deltas).
 
 ### The clever bit: a "managed agent" distiller
 
@@ -150,7 +154,7 @@ CI** (it depends on live traffic existing).
 ```bash
 cd observer
 pip install -r requirements.txt pytest httpx
-pytest                       # 29 tests, deterministic, no network
+pytest                       # 49 tests, deterministic, no network
 ```
 
 The suite proves the contract end-to-end with **synthetic** bus events and a
@@ -164,8 +168,14 @@ The suite proves the contract end-to-end with **synthetic** bus events and a
   flag fires on its trigger; `distill_once` with a **stub** model writes a
   status row; falls back to heuristic when the model raises or the key is unset.
 - `test_web.py` — FastAPI `TestClient`: `/api/overview` returns the operator
-  with its distilled headline + SMEs + pending confirmation; `/api/session/{id}`
-  returns the timeline; `/api/events` returns raw events.
+  with its distilled headline + SMEs + pending confirmation **and keeps offline
+  operators listed (marked offline) past the recent window**; `/api/session/{id}`
+  returns the compact timeline and (with `full=true`) the FULL paginated history;
+  `/api/events` returns the complete firehose with kind/session/text filters +
+  `before_id` pagination; `/api/kinds` returns the per-kind breakdown.
+- `test_store_views.py` — keyset pagination walks the whole DB, text/kind/session
+  filters, full per-session history, last-activity (incl. stale sessions), kind
+  counts.
 
 ---
 
@@ -200,13 +210,16 @@ one card. The store, distiller, and dashboard are **already keyed by
 `session_id`** end-to-end, so the moment events carry a real session tag,
 multi-operator attribution lights up with **no observer change**.
 
-**Proposed minimal, additive orchestrator follow-up (do NOT do now):** add an
-optional `sessionId: str | None` field to the fan-out path — either stamped onto
-each `AgentEvent` as it's published, or carried in a thin envelope around the
-`publish`/`publish_many` calls in `orchestrator/main.py::_drain_to_bus`. It's
+**Proposed minimal, additive orchestrator follow-up:** stamp the originating
+`sessionId` onto each fanned-out event at the `publish`/`publish_many` seam, and
+emit a `Presence` event on `/v2/chat` + `/v2/live` connect/disconnect. Both are
 additive (forward-compatible per the wire protocol's "ignore extra fields"
-rule), touches only the publish seam, and needs no client changes. That single
-hook turns this dashboard into a true multi-operator floor view.
+rule), touch only the publish/connect seam, and need no client changes. **The
+observer side is already implemented** — `normalize` keys on `sessionId` when
+present (single-bucket fallback otherwise) and a `Presence` row is handled. The
+full spec (event shape, hook points, observer consumption) is in
+[`ATTRIBUTION.md`](ATTRIBUTION.md). That hook turns this dashboard into a true
+multi-operator floor view with no further observer change.
 
 ### Other unverified / optional items
 - **Live VM smoke** is optional and not run in CI (needs live traffic). The

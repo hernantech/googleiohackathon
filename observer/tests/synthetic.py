@@ -58,12 +58,63 @@ def safety(severity="HALT", reason="Hot iron near a powered board.") -> dict:
             "suggestedRecoverActions": [], "ts": _ns()}
 
 
+def goodbye(reason="operator closed the app") -> dict:
+    return {"kind": "Goodbye", "reason": reason}
+
+
+def transcript(text="set the PSU to 3.3 volts", partial=False, speaker="user") -> dict:
+    return {"kind": "Transcript", "text": text, "partial": partial,
+            "speaker": speaker, "ts": _ns()}
+
+
+def tool_call(name="lookup_datasheet", call_id="t1", args="{}") -> dict:
+    return {"kind": "ToolCall", "name": name, "argsJson": args, "callId": call_id}
+
+
+def tool_result(call_id="t1", result='{"ok":true}', deferred=False) -> dict:
+    return {"kind": "ToolResult", "callId": call_id, "resultJson": result,
+            "deferred": deferred}
+
+
+def channel_update(message_id="m1", delta="tok", done=False) -> dict:
+    return {"kind": "ChannelUpdate", "messageId": message_id, "deltaText": delta,
+            "done": done, "ts": _ns()}
+
+
+def checkpoint(checkpoint_id="ck1", node="diagnose") -> dict:
+    return {"kind": "CheckpointMarker", "checkpointId": checkpoint_id,
+            "graphNodeName": node, "ts": _ns()}
+
+
+def snapshot_chat(analysis="Solder bridge between pins 11 and 12 of U4.", mid="snap1") -> dict:
+    """A SnapshotAnalysis card carried inside a ChatMessage (application/json)."""
+    import json as _json
+    payload = {
+        "kind": "SnapshotAnalysis", "jobId": "j1",
+        "frame": {"kind": "FrameRef", "uri": "blob://x", "width": 640,
+                  "height": 480, "ts": _ns(), "sourceSeq": 1},
+        "model": "gemini-vision", "analysis": analysis, "cites": [], "ts": _ns(),
+    }
+    return {"kind": "ChatMessage", "channelId": "#actions", "authorId": "system",
+            "authorKind": "system", "body": _json.dumps(payload),
+            "bodyContentType": "application/json", "messageId": mid, "ts": _ns()}
+
+
+def replay_envelope(kind="ChannelList") -> dict:
+    """A per-reconnect replay envelope the bus re-sends (no stable id) — dropped."""
+    return {"kind": kind}
+
+
 def audio() -> dict:
     return {"kind": "AudioChunk", "pcmBase64": "AAAA", "ts": _ns()}
 
 
 def ping() -> dict:
     return {"kind": "Ping", "nonce": "x"}
+
+
+def pong() -> dict:
+    return {"kind": "Pong", "nonce": "x"}
 
 
 def scenario() -> list[dict]:
