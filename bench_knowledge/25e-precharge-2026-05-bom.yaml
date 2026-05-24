@@ -1,0 +1,1098 @@
+# 25e-precharge-2026-05-bom.yaml — REAL 25E precharge BOM (BomDoc + SchDoc join).
+# Extracted from the real Altium project 25E_AMB_Rev2 (25E_Precharge_Board_v2). Components/datasheet URLs from the .BomDoc (cloud _parse_bomdoc logic). Reference designators + net names from the .SchDoc OLE FileHeader records (olefile fallback; altium-schematic-parser is unavailable). Designator<->part joined on Altium DesignItemId. NO documented voltage/current limits are asserted — limit fields are intentionally empty (real-data-only provenance, same as a schematic-image source).
+
+bom:
+  board_id: 25E_Precharge_Board_v2
+  source_file: bench_knowledge/25e-precharge-2026-05-schematic.json
+  note: Extracted from the real Altium project 25E_AMB_Rev2 (25E_Precharge_Board_v2).
+    Components/datasheet URLs from the .BomDoc (cloud _parse_bomdoc logic). Reference
+    designators + net names from the .SchDoc OLE FileHeader records (olefile fallback;
+    altium-schematic-parser is unavailable). Designator<->part joined on Altium DesignItemId.
+    NO documented voltage/current limits are asserted — limit fields are intentionally
+    empty (real-data-only provenance, same as a schematic-image source).
+  items:
+  - designator: C1
+    designator_inferred: false
+    bom_line: 2
+    unit_index: 0
+    name: C0603C104K3RACTU
+    description: CAP CER 0.1UF 25V X7R 0603
+    value: 0.1uF
+    package: null
+    type: capacitor
+    quantity: 1
+    manufacturer: KEMET
+    mpn: C0603C104K3RACTU
+    lifecycle: Volume Production
+    supplier: Farnell
+    supplier_pn: '1650835'
+    unit_price: null
+  - designator: C2
+    designator_inferred: false
+    bom_line: 3
+    unit_index: 0
+    name: C5750X6S2W225K250KA
+    description: Multilayer Ceramic Capacitors 2.2uF ±10% 450V X6S SMD 2220
+    value: 2.2uF
+    package: null
+    type: capacitor
+    quantity: 1
+    manufacturer: TDK
+    mpn: C5750X6S2W225K250KA
+    lifecycle: Volume Production
+    supplier: Farnell
+    supplier_pn: '2522208'
+    unit_price: null
+  - designator: C3
+    designator_inferred: false
+    bom_line: null
+    unit_index: 0
+    name: CL31A226KAHNNNE
+    description: Ceramic Capacitor, Multilayer, Ceramic, 25V, 10% +Tol, 10% -Tol,
+      X5R, 15% TC, 22uF, Surface Mount, 1206
+    value: CL31A226KAHNNNE
+    package: null
+    type: capacitor
+    quantity: 1
+    manufacturer: Samsung
+    mpn: CL31A226KAHNNNE
+    lifecycle: Volume Production
+    supplier: Digikey
+    supplier_pn: 1276-3047-1-ND
+    unit_price: null
+  - designator: C4
+    designator_inferred: false
+    bom_line: 3
+    unit_index: 0
+    name: C5750X6S2W225K250KA
+    description: Multilayer Ceramic Capacitors 2.2uF ±10% 450V X6S SMD 2220
+    value: 2.2uF
+    package: null
+    type: capacitor
+    quantity: 1
+    manufacturer: TDK
+    mpn: C5750X6S2W225K250KA
+    lifecycle: Volume Production
+    supplier: Farnell
+    supplier_pn: '2522208'
+    unit_price: null
+  - designator: C5
+    designator_inferred: false
+    bom_line: null
+    unit_index: 0
+    name: CL31A226KAHNNNE
+    description: Ceramic Capacitor, Multilayer, Ceramic, 25V, 10% +Tol, 10% -Tol,
+      X5R, 15% TC, 22uF, Surface Mount, 1206
+    value: CL31A226KAHNNNE
+    package: null
+    type: capacitor
+    quantity: 1
+    manufacturer: Samsung
+    mpn: CL31A226KAHNNNE
+    lifecycle: Volume Production
+    supplier: Digikey
+    supplier_pn: 1276-3047-1-ND
+    unit_price: null
+  - designator: C6
+    designator_inferred: false
+    bom_line: 3
+    unit_index: 0
+    name: C5750X6S2W225K250KA
+    description: Multilayer Ceramic Capacitors 2.2uF ±10% 450V X6S SMD 2220
+    value: 2.2uF
+    package: null
+    type: capacitor
+    quantity: 1
+    manufacturer: TDK
+    mpn: C5750X6S2W225K250KA
+    lifecycle: Volume Production
+    supplier: Farnell
+    supplier_pn: '2522208'
+    unit_price: null
+  - designator: C7
+    designator_inferred: false
+    bom_line: null
+    unit_index: 0
+    name: CL31A226KAHNNNE
+    description: Ceramic Capacitor, Multilayer, Ceramic, 25V, 10% +Tol, 10% -Tol,
+      X5R, 15% TC, 22uF, Surface Mount, 1206
+    value: CL31A226KAHNNNE
+    package: null
+    type: capacitor
+    quantity: 1
+    manufacturer: Samsung
+    mpn: CL31A226KAHNNNE
+    lifecycle: Volume Production
+    supplier: Digikey
+    supplier_pn: 1276-3047-1-ND
+    unit_price: null
+  - designator: C8
+    designator_inferred: false
+    bom_line: 5
+    unit_index: 0
+    name: 08053C334KAT2A
+    description: Ceramic Capacitor, Multilayer, Ceramic, 25V, 10% +Tol, 10% -Tol,
+      X7R, 15% TC, 0.33uF, Surface Mount, 0805
+    value: 0.33uF
+    package: null
+    type: capacitor
+    quantity: 1
+    manufacturer: Kyocera AVX
+    mpn: 08053C334KAT2A
+    lifecycle: Volume Production
+    supplier: Newark
+    supplier_pn: 04X9373
+    unit_price: null
+  - designator: C9
+    designator_inferred: false
+    bom_line: 6
+    unit_index: 0
+    name: GRM155R71C104KA88D
+    description: CAP CER 0.1UF 16V X7R 0402
+    value: 0.1uF
+    package: null
+    type: capacitor
+    quantity: 1
+    manufacturer: Murata
+    mpn: GRM155R71C104KA88D
+    lifecycle: Volume Production
+    supplier: Future Electronics
+    supplier_pn: '4185353'
+    unit_price: null
+  - designator: D1
+    designator_inferred: false
+    bom_line: 7
+    unit_index: 0
+    name: 1N4148WQ-7-F
+    description: DIODE GEN PURP 100V 300MA SOD123
+    value: 1N4148WQ-7-F
+    package: null
+    type: diode
+    quantity: 1
+    manufacturer: Diodes Zetex
+    mpn: 1N4148WQ-7-F
+    lifecycle: Volume Production
+    supplier: Newark
+    supplier_pn: 07AH4958
+    unit_price: null
+  - designator: D3
+    designator_inferred: false
+    bom_line: 7
+    unit_index: 0
+    name: 1N4148WQ-7-F
+    description: DIODE GEN PURP 100V 300MA SOD123
+    value: 1N4148WQ-7-F
+    package: null
+    type: diode
+    quantity: 1
+    manufacturer: Diodes Zetex
+    mpn: 1N4148WQ-7-F
+    lifecycle: Volume Production
+    supplier: Newark
+    supplier_pn: 07AH4958
+    unit_price: null
+  - designator: D5
+    designator_inferred: false
+    bom_line: null
+    unit_index: 0
+    name: 597-3311-407F
+    description: LED Green, 75 mW, 30 mA, -30 to 85 degC, 2-Pin SMD, RoHS, Tape and
+      Reel
+    value: 597-3311-407F
+    package: null
+    type: diode
+    quantity: 1
+    manufacturer: Dialight
+    mpn: 597-3311-407F
+    lifecycle: Obsolete
+    supplier: null
+    supplier_pn: null
+    unit_price: null
+  - designator: D6
+    designator_inferred: false
+    bom_line: null
+    unit_index: 0
+    name: 597-3311-407F
+    description: LED Green, 75 mW, 30 mA, -30 to 85 degC, 2-Pin SMD, RoHS, Tape and
+      Reel
+    value: 597-3311-407F
+    package: null
+    type: diode
+    quantity: 1
+    manufacturer: Dialight
+    mpn: 597-3311-407F
+    lifecycle: Obsolete
+    supplier: null
+    supplier_pn: null
+    unit_price: null
+  - designator: D7
+    designator_inferred: false
+    bom_line: null
+    unit_index: 0
+    name: 597-3311-407F
+    description: LED Green, 75 mW, 30 mA, -30 to 85 degC, 2-Pin SMD, RoHS, Tape and
+      Reel
+    value: 597-3311-407F
+    package: null
+    type: diode
+    quantity: 1
+    manufacturer: Dialight
+    mpn: 597-3311-407F
+    lifecycle: Obsolete
+    supplier: null
+    supplier_pn: null
+    unit_price: null
+  - designator: F1
+    designator_inferred: false
+    bom_line: 9
+    unit_index: 0
+    name: 0452.500MRL
+    description: NANO2(R) Slo-Blo(R) Fuse, 0.5 A, 125 V, -55 to 125 degC, 2-Pin SMD,
+      RoHS, Tape and Reel
+    value: 0.24 i2t
+    package: null
+    type: fuse
+    quantity: 1
+    manufacturer: Littelfuse
+    mpn: 0452.500MRL
+    lifecycle: Volume Production
+    supplier: Arrow Electronics
+    supplier_pn: 0452.500MRL
+    unit_price: null
+  - designator: F2
+    designator_inferred: false
+    bom_line: 10
+    unit_index: 0
+    name: 0885001.DR
+    description: FUSE BOARD MNT 1A 500VDC SMT
+    value: 0.8 i2t
+    package: null
+    type: fuse
+    quantity: 1
+    manufacturer: Littelfuse
+    mpn: 0885001.DR
+    lifecycle: Volume Production
+    supplier: Arrow Electronics
+    supplier_pn: 0885001.DR
+    unit_price: null
+  - designator: J1
+    designator_inferred: false
+    bom_line: 11
+    unit_index: 0
+    name: 43045-0224
+    description: CONN HEADER VERT 2POS
+    value: 43045-0224
+    package: null
+    type: connector
+    quantity: 1
+    manufacturer: Molex
+    mpn: 43045-0224
+    lifecycle: Volume Production
+    supplier: Avnet
+    supplier_pn: '0430450224'
+    unit_price: null
+  - designator: J2
+    designator_inferred: false
+    bom_line: 11
+    unit_index: 0
+    name: 43045-0224
+    description: CONN HEADER VERT 2POS
+    value: 43045-0224
+    package: null
+    type: connector
+    quantity: 1
+    manufacturer: Molex
+    mpn: 43045-0224
+    lifecycle: Volume Production
+    supplier: Avnet
+    supplier_pn: '0430450224'
+    unit_price: null
+  - designator: J3
+    designator_inferred: false
+    bom_line: 11
+    unit_index: 0
+    name: 43045-0224
+    description: CONN HEADER VERT 2POS
+    value: 43045-0224
+    package: null
+    type: connector
+    quantity: 1
+    manufacturer: Molex
+    mpn: 43045-0224
+    lifecycle: Volume Production
+    supplier: Avnet
+    supplier_pn: '0430450224'
+    unit_price: null
+  - designator: J4
+    designator_inferred: false
+    bom_line: 11
+    unit_index: 0
+    name: 43045-0224
+    description: CONN HEADER VERT 2POS
+    value: 43045-0224
+    package: null
+    type: connector
+    quantity: 1
+    manufacturer: Molex
+    mpn: 43045-0224
+    lifecycle: Volume Production
+    supplier: Avnet
+    supplier_pn: '0430450224'
+    unit_price: null
+  - designator: J5
+    designator_inferred: false
+    bom_line: 11
+    unit_index: 0
+    name: 43045-0224
+    description: CONN HEADER VERT 2POS
+    value: 43045-0224
+    package: null
+    type: connector
+    quantity: 1
+    manufacturer: Molex
+    mpn: 43045-0224
+    lifecycle: Volume Production
+    supplier: Avnet
+    supplier_pn: '0430450224'
+    unit_price: null
+  - designator: J6
+    designator_inferred: false
+    bom_line: 11
+    unit_index: 0
+    name: 43045-0224
+    description: CONN HEADER VERT 2POS
+    value: 43045-0224
+    package: null
+    type: connector
+    quantity: 1
+    manufacturer: Molex
+    mpn: 43045-0224
+    lifecycle: Volume Production
+    supplier: Avnet
+    supplier_pn: '0430450224'
+    unit_price: null
+  - designator: K1
+    designator_inferred: false
+    bom_line: 12
+    unit_index: 0
+    name: G3VM-61G2
+    description: SSR RELAY SPST-NO 400MA 0-60V G3VM-61G2
+    value: SSR
+    package: null
+    type: relay
+    quantity: 1
+    manufacturer: Omron
+    mpn: G3VM-61G2
+    lifecycle: Volume Production
+    supplier: Farnell
+    supplier_pn: '3385063'
+    unit_price: null
+  - designator: K2
+    designator_inferred: false
+    bom_line: null
+    unit_index: 0
+    name: relay
+    description: ''
+    value: LI12-1A85
+    package: null
+    type: relay
+    quantity: 1
+    manufacturer: null
+    mpn: null
+    lifecycle: null
+    supplier: null
+    supplier_pn: null
+    unit_price: null
+  - designator: K3
+    designator_inferred: false
+    bom_line: 14
+    unit_index: 0
+    name: DSP1-DC12V-F
+    description: DSP Relays, 12 V Coil Voltage, 300 mW Nominal Operating Power, -40
+      to 65 degC, 6-Pin DSP, Carton, Case, RoHS
+    value: DSP1DC12VF
+    package: null
+    type: relay
+    quantity: 1
+    manufacturer: Panasonic
+    mpn: DSP1-DC12V-F
+    lifecycle: Volume Production
+    supplier: null
+    supplier_pn: null
+    unit_price: null
+  - designator: Q1
+    designator_inferred: false
+    bom_line: 1
+    unit_index: 0
+    name: NCP785AH120T1G
+    description: Fixed Positive Standard Regulator, 12VCMOS, PDSO3
+    value: NCP785AH120T1G
+    package: null
+    type: transistor
+    quantity: 1
+    manufacturer: ON Semiconductor
+    mpn: NCP785AH120T1G
+    lifecycle: Volume Production
+    supplier: Farnell
+    supplier_pn: '2491554'
+    unit_price: null
+  - designator: Q2
+    designator_inferred: false
+    bom_line: 1
+    unit_index: 0
+    name: NCP785AH120T1G
+    description: Fixed Positive Standard Regulator, 12VCMOS, PDSO3
+    value: NCP785AH120T1G
+    package: null
+    type: transistor
+    quantity: 1
+    manufacturer: ON Semiconductor
+    mpn: NCP785AH120T1G
+    lifecycle: Volume Production
+    supplier: Farnell
+    supplier_pn: '2491554'
+    unit_price: null
+  - designator: Q3
+    designator_inferred: false
+    bom_line: 1
+    unit_index: 0
+    name: NCP785AH120T1G
+    description: Fixed Positive Standard Regulator, 12VCMOS, PDSO3
+    value: NCP785AH120T1G
+    package: null
+    type: transistor
+    quantity: 1
+    manufacturer: ON Semiconductor
+    mpn: NCP785AH120T1G
+    lifecycle: Volume Production
+    supplier: Farnell
+    supplier_pn: '2491554'
+    unit_price: null
+  - designator: R1
+    designator_inferred: false
+    bom_line: 15
+    unit_index: 0
+    name: CRCW2512100KFKEG
+    description: RES Thick Film, 100kO, 1%, 1W, 100ppm/°C, 2512
+    value: 100k
+    package: null
+    type: resistor
+    quantity: 1
+    manufacturer: Vishay
+    mpn: CRCW2512100KFKEG
+    lifecycle: Volume Production
+    supplier: Future Electronics
+    supplier_pn: '2454791'
+    unit_price: null
+  - designator: R2
+    designator_inferred: false
+    bom_line: 15
+    unit_index: 0
+    name: CRCW2512100KFKEG
+    description: RES Thick Film, 100kO, 1%, 1W, 100ppm/°C, 2512
+    value: 100k
+    package: null
+    type: resistor
+    quantity: 1
+    manufacturer: Vishay
+    mpn: CRCW2512100KFKEG
+    lifecycle: Volume Production
+    supplier: Future Electronics
+    supplier_pn: '2454791'
+    unit_price: null
+  - designator: R3
+    designator_inferred: false
+    bom_line: 16
+    unit_index: 0
+    name: CRCW25122K00FKEG
+    description: RES Thick Film, 2kO, 1%, 1W, 100ppm/°C, 2512
+    value: 2k
+    package: null
+    type: resistor
+    quantity: 1
+    manufacturer: Vishay
+    mpn: CRCW25122K00FKEG
+    lifecycle: Volume Production
+    supplier: Farnell
+    supplier_pn: '1470044'
+    unit_price: null
+  - designator: R4
+    designator_inferred: false
+    bom_line: 17
+    unit_index: 0
+    name: CRCW251220K0JNEG
+    description: RES Thick Film, 20kO, 5%, 1W, 200ppm/°C, 2512
+    value: 20k
+    package: null
+    type: resistor
+    quantity: 1
+    manufacturer: Vishay Dale
+    mpn: CRCW251220K0JNEG
+    lifecycle: Volume Production
+    supplier: Farnell
+    supplier_pn: '1571740'
+    unit_price: null
+  - designator: R5
+    designator_inferred: false
+    bom_line: 15
+    unit_index: 0
+    name: CRCW2512100KFKEG
+    description: RES Thick Film, 100kO, 1%, 1W, 100ppm/°C, 2512
+    value: 100k
+    package: null
+    type: resistor
+    quantity: 1
+    manufacturer: Vishay
+    mpn: CRCW2512100KFKEG
+    lifecycle: Volume Production
+    supplier: Future Electronics
+    supplier_pn: '2454791'
+    unit_price: null
+  - designator: R6
+    designator_inferred: false
+    bom_line: 15
+    unit_index: 0
+    name: CRCW2512100KFKEG
+    description: RES Thick Film, 100kO, 1%, 1W, 100ppm/°C, 2512
+    value: 100k
+    package: null
+    type: resistor
+    quantity: 1
+    manufacturer: Vishay
+    mpn: CRCW2512100KFKEG
+    lifecycle: Volume Production
+    supplier: Future Electronics
+    supplier_pn: '2454791'
+    unit_price: null
+  - designator: R7
+    designator_inferred: false
+    bom_line: 15
+    unit_index: 0
+    name: CRCW2512100KFKEG
+    description: RES Thick Film, 100kO, 1%, 1W, 100ppm/°C, 2512
+    value: 100k
+    package: null
+    type: resistor
+    quantity: 1
+    manufacturer: Vishay
+    mpn: CRCW2512100KFKEG
+    lifecycle: Volume Production
+    supplier: Future Electronics
+    supplier_pn: '2454791'
+    unit_price: null
+  - designator: R8
+    designator_inferred: false
+    bom_line: 15
+    unit_index: 0
+    name: CRCW2512100KFKEG
+    description: RES Thick Film, 100kO, 1%, 1W, 100ppm/°C, 2512
+    value: 100k
+    package: null
+    type: resistor
+    quantity: 1
+    manufacturer: Vishay
+    mpn: CRCW2512100KFKEG
+    lifecycle: Volume Production
+    supplier: Future Electronics
+    supplier_pn: '2454791'
+    unit_price: null
+  - designator: R9
+    designator_inferred: false
+    bom_line: 16
+    unit_index: 0
+    name: CRCW25122K00FKEG
+    description: RES Thick Film, 2kO, 1%, 1W, 100ppm/°C, 2512
+    value: 2k
+    package: null
+    type: resistor
+    quantity: 1
+    manufacturer: Vishay
+    mpn: CRCW25122K00FKEG
+    lifecycle: Volume Production
+    supplier: Farnell
+    supplier_pn: '1470044'
+    unit_price: null
+  - designator: R10
+    designator_inferred: false
+    bom_line: 18
+    unit_index: 0
+    name: CRCW08054K99FKEA
+    description: RES Thick Film, 4.99kO, 1%, 0.125W, 100ppm/°C, 0805
+    value: 4.9k
+    package: null
+    type: resistor
+    quantity: 1
+    manufacturer: Vishay
+    mpn: CRCW08054K99FKEA
+    lifecycle: Volume Production
+    supplier: Farnell
+    supplier_pn: '1469926'
+    unit_price: null
+  - designator: R11
+    designator_inferred: false
+    bom_line: 19
+    unit_index: 0
+    name: CRCW120612K0FKEA
+    description: RES Thick Film, 12kO, 1%, 0.25W, 100ppm/°C, 1206
+    value: 12k
+    package: null
+    type: resistor
+    quantity: 1
+    manufacturer: Vishay
+    mpn: CRCW120612K0FKEA
+    lifecycle: Volume Production
+    supplier: Farnell
+    supplier_pn: '1653060'
+    unit_price: null
+  - designator: R12
+    designator_inferred: false
+    bom_line: 20
+    unit_index: 0
+    name: RC1206FR-074K7L
+    description: RES SMD 4.7K OHM 1% 1/4W 1206
+    value: 4.7k
+    package: null
+    type: resistor
+    quantity: 1
+    manufacturer: Yageo
+    mpn: RC1206FR-074K7L
+    lifecycle: Volume Production
+    supplier: Farnell
+    supplier_pn: '2421925'
+    unit_price: null
+  - designator: R13
+    designator_inferred: false
+    bom_line: 21
+    unit_index: 0
+    name: ERA-3AEB8660V
+    description: ERA3AEB8660V
+    value: '866'
+    package: null
+    type: resistor
+    quantity: 1
+    manufacturer: Panasonic
+    mpn: ERA-3AEB8660V
+    lifecycle: Volume Production
+    supplier: Farnell
+    supplier_pn: '1809729'
+    unit_price: null
+  - designator: R14
+    designator_inferred: false
+    bom_line: 22
+    unit_index: 0
+    name: CRCW1206787RFKEA
+    description: RES Thick Film, 787O, 1%, 0.25W, 100ppm/°C, 1206
+    value: '787'
+    package: null
+    type: resistor
+    quantity: 1
+    manufacturer: Vishay
+    mpn: CRCW1206787RFKEA
+    lifecycle: Volume Production
+    supplier: Farnell
+    supplier_pn: '2123877'
+    unit_price: null
+  - designator: R15
+    designator_inferred: false
+    bom_line: 23
+    unit_index: 0
+    name: ERJ-8BWFR010V
+    description: RES 0.01 OHM 1% 1W 1206 ERJ-8BWFR010V
+    value: '0.01'
+    package: null
+    type: resistor
+    quantity: 1
+    manufacturer: Panasonic
+    mpn: ERJ-8BWFR010V
+    lifecycle: Volume Production
+    supplier: Newark
+    supplier_pn: 08N2405
+    unit_price: null
+  - designator: R16
+    designator_inferred: false
+    bom_line: 23
+    unit_index: 0
+    name: ERJ-8BWFR010V
+    description: RES 0.01 OHM 1% 1W 1206 ERJ-8BWFR010V
+    value: '0.01'
+    package: null
+    type: resistor
+    quantity: 1
+    manufacturer: Panasonic
+    mpn: ERJ-8BWFR010V
+    lifecycle: Volume Production
+    supplier: Newark
+    supplier_pn: 08N2405
+    unit_price: null
+  - designator: R17
+    designator_inferred: false
+    bom_line: 23
+    unit_index: 0
+    name: ERJ-8BWFR010V
+    description: RES 0.01 OHM 1% 1W 1206 ERJ-8BWFR010V
+    value: '0.01'
+    package: null
+    type: resistor
+    quantity: 1
+    manufacturer: Panasonic
+    mpn: ERJ-8BWFR010V
+    lifecycle: Volume Production
+    supplier: Newark
+    supplier_pn: 08N2405
+    unit_price: null
+  - designator: R18
+    designator_inferred: false
+    bom_line: 23
+    unit_index: 0
+    name: ERJ-8BWFR010V
+    description: RES 0.01 OHM 1% 1W 1206 ERJ-8BWFR010V
+    value: '0.01'
+    package: null
+    type: resistor
+    quantity: 1
+    manufacturer: Panasonic
+    mpn: ERJ-8BWFR010V
+    lifecycle: Volume Production
+    supplier: Newark
+    supplier_pn: 08N2405
+    unit_price: null
+  - designator: R19
+    designator_inferred: false
+    bom_line: null
+    unit_index: 0
+    name: 1206W4F5100T5E
+    description: 250mW Thick Film Resistors 200V ±100ppm/? ±1% 510O 1206 Chip Resistor
+      - Surface Mount ROHS
+    value: 1206W4F5100T5E
+    package: null
+    type: resistor
+    quantity: 1
+    manufacturer: Royal Electronic Factory
+    mpn: 1206W4F5100T5E
+    lifecycle: null
+    supplier: Mouser
+    supplier_pn: 303-1206W4F5100T5E
+    unit_price: null
+  - designator: R20
+    designator_inferred: false
+    bom_line: null
+    unit_index: 0
+    name: 1206W4F5100T5E
+    description: 250mW Thick Film Resistors 200V ±100ppm/? ±1% 510O 1206 Chip Resistor
+      - Surface Mount ROHS
+    value: 1206W4F5100T5E
+    package: null
+    type: resistor
+    quantity: 1
+    manufacturer: Royal Electronic Factory
+    mpn: 1206W4F5100T5E
+    lifecycle: null
+    supplier: Mouser
+    supplier_pn: 303-1206W4F5100T5E
+    unit_price: null
+  - designator: R21
+    designator_inferred: false
+    bom_line: null
+    unit_index: 0
+    name: 1206W4F5100T5E
+    description: 250mW Thick Film Resistors 200V ±100ppm/? ±1% 510O 1206 Chip Resistor
+      - Surface Mount ROHS
+    value: 1206W4F5100T5E
+    package: null
+    type: resistor
+    quantity: 1
+    manufacturer: Royal Electronic Factory
+    mpn: 1206W4F5100T5E
+    lifecycle: null
+    supplier: Mouser
+    supplier_pn: 303-1206W4F5100T5E
+    unit_price: null
+  - designator: R22
+    designator_inferred: false
+    bom_line: 18
+    unit_index: 0
+    name: CRCW08054K99FKEA
+    description: RES Thick Film, 4.99kO, 1%, 0.125W, 100ppm/°C, 0805
+    value: 4.9k
+    package: null
+    type: resistor
+    quantity: 1
+    manufacturer: Vishay
+    mpn: CRCW08054K99FKEA
+    lifecycle: Volume Production
+    supplier: Farnell
+    supplier_pn: '1469926'
+    unit_price: null
+  - designator: R23
+    designator_inferred: false
+    bom_line: 25
+    unit_index: 0
+    name: RH0505K000FE02
+    description: Fixed Resistor, Wire Wound, 50W, 5000ohm, 1% +/-Tol, 20ppm/Cel, Chassis
+      Mount
+    value: RH0505K000FE02
+    package: null
+    type: resistor
+    quantity: 1
+    manufacturer: Vishay
+    mpn: RH0505K000FE02
+    lifecycle: Volume Production
+    supplier: Farnell
+    supplier_pn: '1369558'
+    unit_price: null
+  - designator: TP1
+    designator_inferred: false
+    bom_line: 26
+    unit_index: 0
+    name: '5003'
+    description: Test Point, Orange, 1-Pin THD, RoHS
+    value: '5003'
+    package: null
+    type: test_point
+    quantity: 1
+    manufacturer: Keystone Electronics
+    mpn: '5003'
+    lifecycle: Volume Production
+    supplier: Future Electronics
+    supplier_pn: '1432640'
+    unit_price: null
+  - designator: TP2
+    designator_inferred: false
+    bom_line: 26
+    unit_index: 0
+    name: '5003'
+    description: Test Point, Orange, 1-Pin THD, RoHS
+    value: '5003'
+    package: null
+    type: test_point
+    quantity: 1
+    manufacturer: Keystone Electronics
+    mpn: '5003'
+    lifecycle: Volume Production
+    supplier: Future Electronics
+    supplier_pn: '1432640'
+    unit_price: null
+  - designator: TP3
+    designator_inferred: false
+    bom_line: 26
+    unit_index: 0
+    name: '5003'
+    description: Test Point, Orange, 1-Pin THD, RoHS
+    value: '5003'
+    package: null
+    type: test_point
+    quantity: 1
+    manufacturer: Keystone Electronics
+    mpn: '5003'
+    lifecycle: Volume Production
+    supplier: Future Electronics
+    supplier_pn: '1432640'
+    unit_price: null
+  - designator: TP4
+    designator_inferred: false
+    bom_line: 26
+    unit_index: 0
+    name: '5003'
+    description: Test Point, Orange, 1-Pin THD, RoHS
+    value: '5003'
+    package: null
+    type: test_point
+    quantity: 1
+    manufacturer: Keystone Electronics
+    mpn: '5003'
+    lifecycle: Volume Production
+    supplier: Future Electronics
+    supplier_pn: '1432640'
+    unit_price: null
+  - designator: TP5
+    designator_inferred: false
+    bom_line: 26
+    unit_index: 0
+    name: '5003'
+    description: Test Point, Orange, 1-Pin THD, RoHS
+    value: '5003'
+    package: null
+    type: test_point
+    quantity: 1
+    manufacturer: Keystone Electronics
+    mpn: '5003'
+    lifecycle: Volume Production
+    supplier: Future Electronics
+    supplier_pn: '1432640'
+    unit_price: null
+  - designator: TP6
+    designator_inferred: false
+    bom_line: 26
+    unit_index: 0
+    name: '5003'
+    description: Test Point, Orange, 1-Pin THD, RoHS
+    value: '5003'
+    package: null
+    type: test_point
+    quantity: 1
+    manufacturer: Keystone Electronics
+    mpn: '5003'
+    lifecycle: Volume Production
+    supplier: Future Electronics
+    supplier_pn: '1432640'
+    unit_price: null
+  - designator: TP7
+    designator_inferred: false
+    bom_line: 26
+    unit_index: 0
+    name: '5003'
+    description: Test Point, Orange, 1-Pin THD, RoHS
+    value: '5003'
+    package: null
+    type: test_point
+    quantity: 1
+    manufacturer: Keystone Electronics
+    mpn: '5003'
+    lifecycle: Volume Production
+    supplier: Future Electronics
+    supplier_pn: '1432640'
+    unit_price: null
+  - designator: TP8
+    designator_inferred: false
+    bom_line: 26
+    unit_index: 0
+    name: '5003'
+    description: Test Point, Orange, 1-Pin THD, RoHS
+    value: '5003'
+    package: null
+    type: test_point
+    quantity: 1
+    manufacturer: Keystone Electronics
+    mpn: '5003'
+    lifecycle: Volume Production
+    supplier: Future Electronics
+    supplier_pn: '1432640'
+    unit_price: null
+  - designator: TP9
+    designator_inferred: false
+    bom_line: 26
+    unit_index: 0
+    name: '5003'
+    description: Test Point, Orange, 1-Pin THD, RoHS
+    value: '5003'
+    package: null
+    type: test_point
+    quantity: 1
+    manufacturer: Keystone Electronics
+    mpn: '5003'
+    lifecycle: Volume Production
+    supplier: Future Electronics
+    supplier_pn: '1432640'
+    unit_price: null
+  - designator: TP10
+    designator_inferred: false
+    bom_line: 26
+    unit_index: 0
+    name: '5003'
+    description: Test Point, Orange, 1-Pin THD, RoHS
+    value: '5003'
+    package: null
+    type: test_point
+    quantity: 1
+    manufacturer: Keystone Electronics
+    mpn: '5003'
+    lifecycle: Volume Production
+    supplier: Future Electronics
+    supplier_pn: '1432640'
+    unit_price: null
+  - designator: TP11
+    designator_inferred: false
+    bom_line: 26
+    unit_index: 0
+    name: '5003'
+    description: Test Point, Orange, 1-Pin THD, RoHS
+    value: '5003'
+    package: null
+    type: test_point
+    quantity: 1
+    manufacturer: Keystone Electronics
+    mpn: '5003'
+    lifecycle: Volume Production
+    supplier: Future Electronics
+    supplier_pn: '1432640'
+    unit_price: null
+  - designator: TP12
+    designator_inferred: false
+    bom_line: 26
+    unit_index: 0
+    name: '5003'
+    description: Test Point, Orange, 1-Pin THD, RoHS
+    value: '5003'
+    package: null
+    type: test_point
+    quantity: 1
+    manufacturer: Keystone Electronics
+    mpn: '5003'
+    lifecycle: Volume Production
+    supplier: Future Electronics
+    supplier_pn: '1432640'
+    unit_price: null
+  - designator: TP13
+    designator_inferred: false
+    bom_line: 26
+    unit_index: 0
+    name: '5003'
+    description: Test Point, Orange, 1-Pin THD, RoHS
+    value: '5003'
+    package: null
+    type: test_point
+    quantity: 1
+    manufacturer: Keystone Electronics
+    mpn: '5003'
+    lifecycle: Volume Production
+    supplier: Future Electronics
+    supplier_pn: '1432640'
+    unit_price: null
+  - designator: U1
+    designator_inferred: false
+    bom_line: 27
+    unit_index: 0
+    name: LM2903AVQDRQ1
+    description: IC DUAL DIFF COMPARATOR 8-SOIC LM2903AVQDRQ1
+    value: Comparator
+    package: null
+    type: ic
+    quantity: 1
+    manufacturer: Texas Instruments
+    mpn: LM2903AVQDRQ1
+    lifecycle: Volume Production
+    supplier: Digikey
+    supplier_pn: 296-18444-1-ND
+    unit_price: null
+  - designator: U2
+    designator_inferred: false
+    bom_line: 27
+    unit_index: 0
+    name: LM2903AVQDRQ1
+    description: IC DUAL DIFF COMPARATOR 8-SOIC LM2903AVQDRQ1
+    value: Comparator
+    package: null
+    type: ic
+    quantity: 1
+    manufacturer: Texas Instruments
+    mpn: LM2903AVQDRQ1
+    lifecycle: Volume Production
+    supplier: Digikey
+    supplier_pn: 296-18444-1-ND
+    unit_price: null
+  - designator: U3
+    designator_inferred: false
+    bom_line: 28
+    unit_index: 0
+    name: UA78L05CPK
+    description: IC REG LINEAR 5V 100MA SOT89-3
+    value: UA78L05CPK
+    package: null
+    type: ic
+    quantity: 1
+    manufacturer: Texas Instruments
+    mpn: UA78L05CPK
+    lifecycle: Volume Production
+    supplier: Digikey
+    supplier_pn: 296-13531-1-ND
+    unit_price: null

@@ -1,0 +1,471 @@
+# 25e-precharge-2026-05.yaml — REAL 25E precharge board profile.
+# Extracted from the real Altium project 25E_AMB_Rev2 (25E_Precharge_Board_v2). Components/datasheet URLs from the .BomDoc (cloud _parse_bomdoc logic). Reference designators + net names from the .SchDoc OLE FileHeader records (olefile fallback; altium-schematic-parser is unavailable). Designator<->part joined on Altium DesignItemId. NO documented voltage/current limits are asserted — limit fields are intentionally empty (real-data-only provenance, same as a schematic-image source).
+#
+# Select at runtime:  BOARD_PROFILE=bench_knowledge/25e-precharge-2026-05.yaml
+# (Also auto-ingests bench_knowledge/25e-precharge-2026-05-schematic.json when
+#  FORGE_BOARD=25e — see orchestrator/knowledge/__init__.py.)
+
+board_profile:
+  id: 25e-precharge-2026-05
+  description: 25E_Precharge_Board_v2 — EV high-voltage precharge board (AMB Rev2).
+    Real Altium project; HV precharge check, shutdown-circuit (SDC) logic, 12V/GLV
+    step-down, and connectors.
+  provenance: Extracted from the real Altium project 25E_AMB_Rev2 (25E_Precharge_Board_v2).
+    Components/datasheet URLs from the .BomDoc (cloud _parse_bomdoc logic). Reference
+    designators + net names from the .SchDoc OLE FileHeader records (olefile fallback;
+    altium-schematic-parser is unavailable). Designator<->part joined on Altium DesignItemId.
+    NO documented voltage/current limits are asserted — limit fields are intentionally
+    empty (real-data-only provenance, same as a schematic-image source).
+  parts:
+  - ref: C1
+    part: C0603C104K3RACTU
+    role: 0.1uF — CAP CER 0.1UF 25V X7R 0603
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/KEME/KEME-S-A0008991654/KEME-S-A0008991654-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: C2
+    part: C5750X6S2W225K250KA
+    role: 2.2uF — Multilayer Ceramic Capacitors 2.2uF ±10% 450V X6S SMD 2220
+    datasheet: http://www.farnell.com/datasheets/2860696.pdf?src-supplier=Farnell
+    source: altium_schdoc
+  - ref: C3
+    part: CL31A226KAHNNNE
+    role: CL31A226KAHNNNE — Ceramic Capacitor, Multilayer, Ceramic, 25V, 10% +Tol,
+      10% -Tol, X5R, 15% TC, 22uF, Surface Mount, 1206
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/SEMS/SEMS-S-A0008384515/SEMS-S-A0008873224-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: C4
+    part: C5750X6S2W225K250KA
+    role: 2.2uF — Multilayer Ceramic Capacitors 2.2uF ±10% 450V X6S SMD 2220
+    datasheet: http://www.farnell.com/datasheets/2860696.pdf?src-supplier=Farnell
+    source: altium_schdoc
+  - ref: C5
+    part: CL31A226KAHNNNE
+    role: CL31A226KAHNNNE — Ceramic Capacitor, Multilayer, Ceramic, 25V, 10% +Tol,
+      10% -Tol, X5R, 15% TC, 22uF, Surface Mount, 1206
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/SEMS/SEMS-S-A0008384515/SEMS-S-A0008873224-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: C6
+    part: C5750X6S2W225K250KA
+    role: 2.2uF — Multilayer Ceramic Capacitors 2.2uF ±10% 450V X6S SMD 2220
+    datasheet: http://www.farnell.com/datasheets/2860696.pdf?src-supplier=Farnell
+    source: altium_schdoc
+  - ref: C7
+    part: CL31A226KAHNNNE
+    role: CL31A226KAHNNNE — Ceramic Capacitor, Multilayer, Ceramic, 25V, 10% +Tol,
+      10% -Tol, X5R, 15% TC, 22uF, Surface Mount, 1206
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/SEMS/SEMS-S-A0008384515/SEMS-S-A0008873224-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: C8
+    part: 08053C334KAT2A
+    role: 0.33uF — Ceramic Capacitor, Multilayer, Ceramic, 25V, 10% +Tol, 10% -Tol,
+      X7R, 15% TC, 0.33uF, Surface Mount, 0805
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/AVXC/AVXC-S-A0009640452/AVXC-S-A0009640452-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: C9
+    part: GRM155R71C104KA88D
+    role: 0.1uF — CAP CER 0.1UF 16V X7R 0402
+    datasheet: https://psearch.en.murata.com:443/capacitor/product/GRM155R71C104KA88%23.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: D1
+    part: 1N4148WQ-7-F
+    role: 1N4148WQ-7-F — DIODE GEN PURP 100V 300MA SOD123
+    datasheet: http://www.farnell.com/datasheets/2814310.pdf?src-supplier=Newark
+    source: altium_schdoc
+  - ref: D3
+    part: 1N4148WQ-7-F
+    role: 1N4148WQ-7-F — DIODE GEN PURP 100V 300MA SOD123
+    datasheet: http://www.farnell.com/datasheets/2814310.pdf?src-supplier=Newark
+    source: altium_schdoc
+  - ref: D5
+    part: 597-3311-407F
+    role: 597-3311-407F — LED Green, 75 mW, 30 mA, -30 to 85 degC, 2-Pin SMD, RoHS,
+      Tape and Reel
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/DIAC/DIACS01079/DIACS01079-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: D6
+    part: 597-3311-407F
+    role: 597-3311-407F — LED Green, 75 mW, 30 mA, -30 to 85 degC, 2-Pin SMD, RoHS,
+      Tape and Reel
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/DIAC/DIACS01079/DIACS01079-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: D7
+    part: 597-3311-407F
+    role: 597-3311-407F — LED Green, 75 mW, 30 mA, -30 to 85 degC, 2-Pin SMD, RoHS,
+      Tape and Reel
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/DIAC/DIACS01079/DIACS01079-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: F1
+    part: 0452.500MRL
+    role: 0.24 i2t — NANO2(R) Slo-Blo(R) Fuse, 0.5 A, 125 V, -55 to 125 degC, 2-Pin
+      SMD, RoHS, Tape and Reel
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/LFSI/LFSI-S-A0002813178/LFSI-S-A0002813178-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: F2
+    part: 0885001.DR
+    role: 0.8 i2t — FUSE BOARD MNT 1A 500VDC SMT
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/LFSI/LFSI-S-A0004655925/LFSI-S-A0004655925-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: J1
+    part: 43045-0224
+    role: 43045-0224 — CONN HEADER VERT 2POS
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/MOLE/MOLE-S-A0003536925/MOLE-S-A0003536821-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: J2
+    part: 43045-0224
+    role: 43045-0224 — CONN HEADER VERT 2POS
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/MOLE/MOLE-S-A0003536925/MOLE-S-A0003536821-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: J3
+    part: 43045-0224
+    role: 43045-0224 — CONN HEADER VERT 2POS
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/MOLE/MOLE-S-A0003536925/MOLE-S-A0003536821-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: J4
+    part: 43045-0224
+    role: 43045-0224 — CONN HEADER VERT 2POS
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/MOLE/MOLE-S-A0003536925/MOLE-S-A0003536821-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: J5
+    part: 43045-0224
+    role: 43045-0224 — CONN HEADER VERT 2POS
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/MOLE/MOLE-S-A0003536925/MOLE-S-A0003536821-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: J6
+    part: 43045-0224
+    role: 43045-0224 — CONN HEADER VERT 2POS
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/MOLE/MOLE-S-A0003536925/MOLE-S-A0003536821-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: K1
+    part: G3VM-61G2
+    role: SSR — SSR RELAY SPST-NO 400MA 0-60V G3VM-61G2
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/OMRN/OMRN-S-A0008157747/OMRN-S-A0008157747-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: K2
+    part: relay
+    role: LI12-1A85
+    source: altium_schdoc
+  - ref: K3
+    part: DSP1-DC12V-F
+    role: DSP1DC12VF — DSP Relays, 12 V Coil Voltage, 300 mW Nominal Operating Power,
+      -40 to 65 degC, 6-Pin DSP, Carton, Case, RoHS
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/PANA/PANA-S-A0000093155/PANA-S-A0000093155-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: Q1
+    part: NCP785AH120T1G
+    role: NCP785AH120T1G — Fixed Positive Standard Regulator, 12VCMOS, PDSO3
+    datasheet: http://www.farnell.com/datasheets/1948370.pdf?src-supplier=Farnell
+    source: altium_schdoc
+  - ref: Q2
+    part: NCP785AH120T1G
+    role: NCP785AH120T1G — Fixed Positive Standard Regulator, 12VCMOS, PDSO3
+    datasheet: http://www.farnell.com/datasheets/1948370.pdf?src-supplier=Farnell
+    source: altium_schdoc
+  - ref: Q3
+    part: NCP785AH120T1G
+    role: NCP785AH120T1G — Fixed Positive Standard Regulator, 12VCMOS, PDSO3
+    datasheet: http://www.farnell.com/datasheets/1948370.pdf?src-supplier=Farnell
+    source: altium_schdoc
+  - ref: R1
+    part: CRCW2512100KFKEG
+    role: 100k — RES Thick Film, 100kO, 1%, 1W, 100ppm/°C, 2512
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/VISH/VISH-S-A0007266705/VISH-S-A0007266705-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: R2
+    part: CRCW2512100KFKEG
+    role: 100k — RES Thick Film, 100kO, 1%, 1W, 100ppm/°C, 2512
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/VISH/VISH-S-A0007266705/VISH-S-A0007266705-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: R3
+    part: CRCW25122K00FKEG
+    role: 2k — RES Thick Film, 2kO, 1%, 1W, 100ppm/°C, 2512
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/VISH/VISH-S-A0007266705/VISH-S-A0007266705-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: R4
+    part: CRCW251220K0JNEG
+    role: 20k — RES Thick Film, 20kO, 5%, 1W, 200ppm/°C, 2512
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/VISH/VISH-S-A0007266705/VISH-S-A0007266705-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: R5
+    part: CRCW2512100KFKEG
+    role: 100k — RES Thick Film, 100kO, 1%, 1W, 100ppm/°C, 2512
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/VISH/VISH-S-A0007266705/VISH-S-A0007266705-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: R6
+    part: CRCW2512100KFKEG
+    role: 100k — RES Thick Film, 100kO, 1%, 1W, 100ppm/°C, 2512
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/VISH/VISH-S-A0007266705/VISH-S-A0007266705-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: R7
+    part: CRCW2512100KFKEG
+    role: 100k — RES Thick Film, 100kO, 1%, 1W, 100ppm/°C, 2512
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/VISH/VISH-S-A0007266705/VISH-S-A0007266705-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: R8
+    part: CRCW2512100KFKEG
+    role: 100k — RES Thick Film, 100kO, 1%, 1W, 100ppm/°C, 2512
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/VISH/VISH-S-A0007266705/VISH-S-A0007266705-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: R9
+    part: CRCW25122K00FKEG
+    role: 2k — RES Thick Film, 2kO, 1%, 1W, 100ppm/°C, 2512
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/VISH/VISH-S-A0007266705/VISH-S-A0007266705-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: R10
+    part: CRCW08054K99FKEA
+    role: 4.9k — RES Thick Film, 4.99kO, 1%, 0.125W, 100ppm/°C, 0805
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/VISH/VISH-S-A0007266705/VISH-S-A0007266705-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: R11
+    part: CRCW120612K0FKEA
+    role: 12k — RES Thick Film, 12kO, 1%, 0.25W, 100ppm/°C, 1206
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/VISH/VISH-S-A0007266705/VISH-S-A0007266705-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: R12
+    part: RC1206FR-074K7L
+    role: 4.7k — RES SMD 4.7K OHM 1% 1/4W 1206
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/YAGO/YAGO-S-A0008145938/YAGO-S-A0008145938-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: R13
+    part: ERA-3AEB8660V
+    role: 866 — ERA3AEB8660V
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/PANA/PANA-S-A0009459258/PANA-S-A0009459258-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: R14
+    part: CRCW1206787RFKEA
+    role: 787 — RES Thick Film, 787O, 1%, 0.25W, 100ppm/°C, 1206
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/VISH/VISH-S-A0007266705/VISH-S-A0007266705-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: R15
+    part: ERJ-8BWFR010V
+    role: 0.01 — RES 0.01 OHM 1% 1W 1206 ERJ-8BWFR010V
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/PANA/PANA-S-A0009615198/PANA-S-A0009615198-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: R16
+    part: ERJ-8BWFR010V
+    role: 0.01 — RES 0.01 OHM 1% 1W 1206 ERJ-8BWFR010V
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/PANA/PANA-S-A0009615198/PANA-S-A0009615198-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: R17
+    part: ERJ-8BWFR010V
+    role: 0.01 — RES 0.01 OHM 1% 1W 1206 ERJ-8BWFR010V
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/PANA/PANA-S-A0009615198/PANA-S-A0009615198-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: R18
+    part: ERJ-8BWFR010V
+    role: 0.01 — RES 0.01 OHM 1% 1W 1206 ERJ-8BWFR010V
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/PANA/PANA-S-A0009615198/PANA-S-A0009615198-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: R19
+    part: 1206W4F5100T5E
+    role: 1206W4F5100T5E — 250mW Thick Film Resistors 200V ±100ppm/? ±1% 510O 1206
+      Chip Resistor - Surface Mount ROHS
+    datasheet: https://datasheet.octopart.com/1206W4F5100T5E-Royal-Ohm-datasheet-165785611.pdf?src-supplier=TME
+    source: altium_schdoc
+  - ref: R20
+    part: 1206W4F5100T5E
+    role: 1206W4F5100T5E — 250mW Thick Film Resistors 200V ±100ppm/? ±1% 510O 1206
+      Chip Resistor - Surface Mount ROHS
+    datasheet: https://datasheet.octopart.com/1206W4F5100T5E-Royal-Ohm-datasheet-165785611.pdf?src-supplier=TME
+    source: altium_schdoc
+  - ref: R21
+    part: 1206W4F5100T5E
+    role: 1206W4F5100T5E — 250mW Thick Film Resistors 200V ±100ppm/? ±1% 510O 1206
+      Chip Resistor - Surface Mount ROHS
+    datasheet: https://datasheet.octopart.com/1206W4F5100T5E-Royal-Ohm-datasheet-165785611.pdf?src-supplier=TME
+    source: altium_schdoc
+  - ref: R22
+    part: CRCW08054K99FKEA
+    role: 4.9k — RES Thick Film, 4.99kO, 1%, 0.125W, 100ppm/°C, 0805
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/VISH/VISH-S-A0007266705/VISH-S-A0007266705-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: R23
+    part: RH0505K000FE02
+    role: RH0505K000FE02 — Fixed Resistor, Wire Wound, 50W, 5000ohm, 1% +/-Tol, 20ppm/Cel,
+      Chassis Mount
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/VISH/VISH-S-A0003599165/VISH-S-A0003599165-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: TP1
+    part: '5003'
+    role: 5003 — Test Point, Orange, 1-Pin THD, RoHS
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/KEYC/KEYCS01036/KEYCS02044-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: TP2
+    part: '5003'
+    role: 5003 — Test Point, Orange, 1-Pin THD, RoHS
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/KEYC/KEYCS01036/KEYCS02044-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: TP3
+    part: '5003'
+    role: 5003 — Test Point, Orange, 1-Pin THD, RoHS
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/KEYC/KEYCS01036/KEYCS02044-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: TP4
+    part: '5003'
+    role: 5003 — Test Point, Orange, 1-Pin THD, RoHS
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/KEYC/KEYCS01036/KEYCS02044-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: TP5
+    part: '5003'
+    role: 5003 — Test Point, Orange, 1-Pin THD, RoHS
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/KEYC/KEYCS01036/KEYCS02044-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: TP6
+    part: '5003'
+    role: 5003 — Test Point, Orange, 1-Pin THD, RoHS
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/KEYC/KEYCS01036/KEYCS02044-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: TP7
+    part: '5003'
+    role: 5003 — Test Point, Orange, 1-Pin THD, RoHS
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/KEYC/KEYCS01036/KEYCS02044-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: TP8
+    part: '5003'
+    role: 5003 — Test Point, Orange, 1-Pin THD, RoHS
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/KEYC/KEYCS01036/KEYCS02044-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: TP9
+    part: '5003'
+    role: 5003 — Test Point, Orange, 1-Pin THD, RoHS
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/KEYC/KEYCS01036/KEYCS02044-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: TP10
+    part: '5003'
+    role: 5003 — Test Point, Orange, 1-Pin THD, RoHS
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/KEYC/KEYCS01036/KEYCS02044-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: TP11
+    part: '5003'
+    role: 5003 — Test Point, Orange, 1-Pin THD, RoHS
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/KEYC/KEYCS01036/KEYCS02044-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: TP12
+    part: '5003'
+    role: 5003 — Test Point, Orange, 1-Pin THD, RoHS
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/KEYC/KEYCS01036/KEYCS02044-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: TP13
+    part: '5003'
+    role: 5003 — Test Point, Orange, 1-Pin THD, RoHS
+    datasheet: https://datasheet.ciiva.com:443/pdfs/VipMasterIC/IC/KEYC/KEYCS01036/KEYCS02044-1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: U1
+    part: LM2903AVQDRQ1
+    role: Comparator — IC DUAL DIFF COMPARATOR 8-SOIC LM2903AVQDRQ1
+    datasheet: https://www.ti.com:443/lit/ds/symlink/lm2903-q1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: U2
+    part: LM2903AVQDRQ1
+    role: Comparator — IC DUAL DIFF COMPARATOR 8-SOIC LM2903AVQDRQ1
+    datasheet: https://www.ti.com:443/lit/ds/symlink/lm2903-q1.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  - ref: U3
+    part: UA78L05CPK
+    role: UA78L05CPK — IC REG LINEAR 5V 100MA SOT89-3
+    datasheet: https://www.ti.com:443/lit/ds/symlink/ua78l.pdf?src-supplier=IHS+Markit
+    source: altium_schdoc
+  rails: []
+  nets:
+  - id: +5V
+    desc: net from Altium schematic (no documented limit)
+    source: altium_schdoc
+  - id: 12V
+    desc: net from Altium schematic (no documented limit)
+    source: altium_schdoc
+  - id: 60V_COMP
+    desc: net from Altium schematic (no documented limit)
+    source: altium_schdoc
+  - id: 60V LED
+    desc: net from Altium schematic (no documented limit)
+    source: altium_schdoc
+  - id: AIR+
+    desc: net from Altium schematic (no documented limit)
+    source: altium_schdoc
+  - id: AIR -
+    desc: net from Altium schematic (no documented limit)
+    source: altium_schdoc
+  - id: AIR_COIL+
+    desc: net from Altium schematic (no documented limit)
+    source: altium_schdoc
+  - id: AIR_COIL-
+    desc: net from Altium schematic (no documented limit)
+    source: altium_schdoc
+  - id: Charge_ON
+    desc: net from Altium schematic (no documented limit)
+    source: altium_schdoc
+  - id: comp
+    desc: net from Altium schematic (no documented limit)
+    source: altium_schdoc
+  - id: comp in
+    desc: net from Altium schematic (no documented limit)
+    source: altium_schdoc
+  - id: comp out
+    desc: net from Altium schematic (no documented limit)
+    source: altium_schdoc
+  - id: GLV_BATT
+    desc: net from Altium schematic (no documented limit)
+    source: altium_schdoc
+  - id: GND
+    desc: net from Altium schematic (no documented limit)
+    source: altium_schdoc
+  - id: HV+
+    desc: net from Altium schematic (no documented limit)
+    source: altium_schdoc
+  - id: HV-
+    desc: net from Altium schematic (no documented limit)
+    source: altium_schdoc
+  - id: HV_IN
+    desc: net from Altium schematic (no documented limit)
+    source: altium_schdoc
+  - id: POST RELAY
+    desc: net from Altium schematic (no documented limit)
+    source: altium_schdoc
+  - id: Precharge_Resistor
+    desc: net from Altium schematic (no documented limit)
+    source: altium_schdoc
+  - id: Pre_resis
+    desc: net from Altium schematic (no documented limit)
+    source: altium_schdoc
+  - id: SDC_GND
+    desc: net from Altium schematic (no documented limit)
+    source: altium_schdoc
+  - id: SDC RTN
+    desc: net from Altium schematic (no documented limit)
+    source: altium_schdoc
+  - id: TS+
+    desc: net from Altium schematic (no documented limit)
+    source: altium_schdoc
+  - id: TS_IN
+    desc: net from Altium schematic (no documented limit)
+    source: altium_schdoc
+  test_points:
+  - id: TP1
+    desc: Test Point, Orange, 1-Pin THD, RoHS
+  - id: TP2
+    desc: Test Point, Orange, 1-Pin THD, RoHS
+  - id: TP3
+    desc: Test Point, Orange, 1-Pin THD, RoHS
+  - id: TP4
+    desc: Test Point, Orange, 1-Pin THD, RoHS
+  - id: TP5
+    desc: Test Point, Orange, 1-Pin THD, RoHS
+  - id: TP6
+    desc: Test Point, Orange, 1-Pin THD, RoHS
+  - id: TP7
+    desc: Test Point, Orange, 1-Pin THD, RoHS
+  - id: TP8
+    desc: Test Point, Orange, 1-Pin THD, RoHS
+  - id: TP9
+    desc: Test Point, Orange, 1-Pin THD, RoHS
+  - id: TP10
+    desc: Test Point, Orange, 1-Pin THD, RoHS
+  - id: TP11
+    desc: Test Point, Orange, 1-Pin THD, RoHS
+  - id: TP12
+    desc: Test Point, Orange, 1-Pin THD, RoHS
+  - id: TP13
+    desc: Test Point, Orange, 1-Pin THD, RoHS
+  preconditions:
+    flash_requires_psu_off: true
+    rework_requires_psu_off: true
+  procedures: []

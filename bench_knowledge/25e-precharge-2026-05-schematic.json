@@ -1,0 +1,698 @@
+{
+  "schematicId": "25e-precharge-2026-05",
+  "source": {
+    "kind": "altium_schdoc",
+    "uri": "file://25E_Precharge_Board_v2.BomDoc + 5x .SchDoc (25E_AMB_Rev2)",
+    "model": null
+  },
+  "confidence": null,
+  "components": [
+    {
+      "ref": "C1",
+      "part": "C0603C104K3RACTU",
+      "type": "capacitor",
+      "value": "0.1uF",
+      "description": "CAP CER 0.1UF 25V X7R 0603",
+      "sheet": "[1] HV_Precharge_Check.SchDoc"
+    },
+    {
+      "ref": "C2",
+      "part": "C5750X6S2W225K250KA",
+      "type": "capacitor",
+      "value": "2.2uF",
+      "description": "Multilayer Ceramic Capacitors 2.2uF ±10% 450V X6S SMD 2220",
+      "sheet": "[3] 12V_Stepdown.SchDoc"
+    },
+    {
+      "ref": "C3",
+      "part": "CL31A226KAHNNNE",
+      "type": "capacitor",
+      "value": "CL31A226KAHNNNE",
+      "description": "Ceramic Capacitor, Multilayer, Ceramic, 25V, 10% +Tol, 10% -Tol, X5R, 15% TC, 22uF, Surface Mount, 1206",
+      "sheet": "[3] 12V_Stepdown.SchDoc"
+    },
+    {
+      "ref": "C4",
+      "part": "C5750X6S2W225K250KA",
+      "type": "capacitor",
+      "value": "2.2uF",
+      "description": "Multilayer Ceramic Capacitors 2.2uF ±10% 450V X6S SMD 2220",
+      "sheet": "[3] 12V_Stepdown.SchDoc"
+    },
+    {
+      "ref": "C5",
+      "part": "CL31A226KAHNNNE",
+      "type": "capacitor",
+      "value": "CL31A226KAHNNNE",
+      "description": "Ceramic Capacitor, Multilayer, Ceramic, 25V, 10% +Tol, 10% -Tol, X5R, 15% TC, 22uF, Surface Mount, 1206",
+      "sheet": "[3] 12V_Stepdown.SchDoc"
+    },
+    {
+      "ref": "C6",
+      "part": "C5750X6S2W225K250KA",
+      "type": "capacitor",
+      "value": "2.2uF",
+      "description": "Multilayer Ceramic Capacitors 2.2uF ±10% 450V X6S SMD 2220",
+      "sheet": "[3] 12V_Stepdown.SchDoc"
+    },
+    {
+      "ref": "C7",
+      "part": "CL31A226KAHNNNE",
+      "type": "capacitor",
+      "value": "CL31A226KAHNNNE",
+      "description": "Ceramic Capacitor, Multilayer, Ceramic, 25V, 10% +Tol, 10% -Tol, X5R, 15% TC, 22uF, Surface Mount, 1206",
+      "sheet": "[3] 12V_Stepdown.SchDoc"
+    },
+    {
+      "ref": "C8",
+      "part": "08053C334KAT2A",
+      "type": "capacitor",
+      "value": "0.33uF",
+      "description": "Ceramic Capacitor, Multilayer, Ceramic, 25V, 10% +Tol, 10% -Tol, X7R, 15% TC, 0.33uF, Surface Mount, 0805",
+      "sheet": "GLV_Stepdown.SchDoc"
+    },
+    {
+      "ref": "C9",
+      "part": "GRM155R71C104KA88D",
+      "type": "capacitor",
+      "value": "0.1uF",
+      "description": "CAP CER 0.1UF 16V X7R 0402",
+      "sheet": "GLV_Stepdown.SchDoc"
+    },
+    {
+      "ref": "D1",
+      "part": "1N4148WQ-7-F",
+      "type": "diode",
+      "value": "1N4148WQ-7-F",
+      "description": "DIODE GEN PURP 100V 300MA SOD123",
+      "sheet": "[2] SDC_Logic.SchDoc"
+    },
+    {
+      "ref": "D3",
+      "part": "1N4148WQ-7-F",
+      "type": "diode",
+      "value": "1N4148WQ-7-F",
+      "description": "DIODE GEN PURP 100V 300MA SOD123",
+      "sheet": "[2] SDC_Logic.SchDoc"
+    },
+    {
+      "ref": "D5",
+      "part": "597-3311-407F",
+      "type": "diode",
+      "value": "597-3311-407F",
+      "description": "LED Green, 75 mW, 30 mA, -30 to 85 degC, 2-Pin SMD, RoHS, Tape and Reel",
+      "sheet": "[4] Connectors.SchDoc"
+    },
+    {
+      "ref": "D6",
+      "part": "597-3311-407F",
+      "type": "diode",
+      "value": "597-3311-407F",
+      "description": "LED Green, 75 mW, 30 mA, -30 to 85 degC, 2-Pin SMD, RoHS, Tape and Reel",
+      "sheet": "[4] Connectors.SchDoc"
+    },
+    {
+      "ref": "D7",
+      "part": "597-3311-407F",
+      "type": "diode",
+      "value": "597-3311-407F",
+      "description": "LED Green, 75 mW, 30 mA, -30 to 85 degC, 2-Pin SMD, RoHS, Tape and Reel",
+      "sheet": "[4] Connectors.SchDoc"
+    },
+    {
+      "ref": "F1",
+      "part": "0452.500MRL",
+      "type": "fuse",
+      "value": "0.24 i2t",
+      "description": "NANO2(R) Slo-Blo(R) Fuse, 0.5 A, 125 V, -55 to 125 degC, 2-Pin SMD, RoHS, Tape and Reel",
+      "sheet": "[1] HV_Precharge_Check.SchDoc"
+    },
+    {
+      "ref": "F2",
+      "part": "0885001.DR",
+      "type": "fuse",
+      "value": "0.8 i2t",
+      "description": "FUSE BOARD MNT 1A 500VDC SMT",
+      "sheet": "[3] 12V_Stepdown.SchDoc"
+    },
+    {
+      "ref": "J1",
+      "part": "43045-0224",
+      "type": "connector",
+      "value": "43045-0224",
+      "description": "CONN HEADER VERT 2POS",
+      "sheet": "[4] Connectors.SchDoc"
+    },
+    {
+      "ref": "J2",
+      "part": "43045-0224",
+      "type": "connector",
+      "value": "43045-0224",
+      "description": "CONN HEADER VERT 2POS",
+      "sheet": "[4] Connectors.SchDoc"
+    },
+    {
+      "ref": "J3",
+      "part": "43045-0224",
+      "type": "connector",
+      "value": "43045-0224",
+      "description": "CONN HEADER VERT 2POS",
+      "sheet": "[4] Connectors.SchDoc"
+    },
+    {
+      "ref": "J4",
+      "part": "43045-0224",
+      "type": "connector",
+      "value": "43045-0224",
+      "description": "CONN HEADER VERT 2POS",
+      "sheet": "[4] Connectors.SchDoc"
+    },
+    {
+      "ref": "J5",
+      "part": "43045-0224",
+      "type": "connector",
+      "value": "43045-0224",
+      "description": "CONN HEADER VERT 2POS",
+      "sheet": "[4] Connectors.SchDoc"
+    },
+    {
+      "ref": "J6",
+      "part": "43045-0224",
+      "type": "connector",
+      "value": "43045-0224",
+      "description": "CONN HEADER VERT 2POS",
+      "sheet": "[4] Connectors.SchDoc"
+    },
+    {
+      "ref": "K1",
+      "part": "G3VM-61G2",
+      "type": "relay",
+      "value": "SSR",
+      "description": "SSR RELAY SPST-NO 400MA 0-60V G3VM-61G2",
+      "sheet": "[1] HV_Precharge_Check.SchDoc"
+    },
+    {
+      "ref": "K2",
+      "part": null,
+      "type": "relay",
+      "value": "LI12-1A85",
+      "description": null,
+      "sheet": "[2] SDC_Logic.SchDoc"
+    },
+    {
+      "ref": "K3",
+      "part": "DSP1-DC12V-F",
+      "type": "relay",
+      "value": "DSP1DC12VF",
+      "description": "DSP Relays, 12 V Coil Voltage, 300 mW Nominal Operating Power, -40 to 65 degC, 6-Pin DSP, Carton, Case, RoHS",
+      "sheet": "[2] SDC_Logic.SchDoc"
+    },
+    {
+      "ref": "Q1",
+      "part": "NCP785AH120T1G",
+      "type": "transistor",
+      "value": "NCP785AH120T1G",
+      "description": "Fixed Positive Standard Regulator, 12VCMOS, PDSO3",
+      "sheet": "[3] 12V_Stepdown.SchDoc"
+    },
+    {
+      "ref": "Q2",
+      "part": "NCP785AH120T1G",
+      "type": "transistor",
+      "value": "NCP785AH120T1G",
+      "description": "Fixed Positive Standard Regulator, 12VCMOS, PDSO3",
+      "sheet": "[3] 12V_Stepdown.SchDoc"
+    },
+    {
+      "ref": "Q3",
+      "part": "NCP785AH120T1G",
+      "type": "transistor",
+      "value": "NCP785AH120T1G",
+      "description": "Fixed Positive Standard Regulator, 12VCMOS, PDSO3",
+      "sheet": "[3] 12V_Stepdown.SchDoc"
+    },
+    {
+      "ref": "R1",
+      "part": "CRCW2512100KFKEG",
+      "type": "resistor",
+      "value": "100k",
+      "description": "RES Thick Film, 100kO, 1%, 1W, 100ppm/°C, 2512",
+      "sheet": "[1] HV_Precharge_Check.SchDoc"
+    },
+    {
+      "ref": "R2",
+      "part": "CRCW2512100KFKEG",
+      "type": "resistor",
+      "value": "100k",
+      "description": "RES Thick Film, 100kO, 1%, 1W, 100ppm/°C, 2512",
+      "sheet": "[1] HV_Precharge_Check.SchDoc"
+    },
+    {
+      "ref": "R3",
+      "part": "CRCW25122K00FKEG",
+      "type": "resistor",
+      "value": "2k",
+      "description": "RES Thick Film, 2kO, 1%, 1W, 100ppm/°C, 2512",
+      "sheet": "[1] HV_Precharge_Check.SchDoc"
+    },
+    {
+      "ref": "R4",
+      "part": "CRCW251220K0JNEG",
+      "type": "resistor",
+      "value": "20k",
+      "description": "RES Thick Film, 20kO, 5%, 1W, 200ppm/°C, 2512",
+      "sheet": "[1] HV_Precharge_Check.SchDoc"
+    },
+    {
+      "ref": "R5",
+      "part": "CRCW2512100KFKEG",
+      "type": "resistor",
+      "value": "100k",
+      "description": "RES Thick Film, 100kO, 1%, 1W, 100ppm/°C, 2512",
+      "sheet": "[1] HV_Precharge_Check.SchDoc"
+    },
+    {
+      "ref": "R6",
+      "part": "CRCW2512100KFKEG",
+      "type": "resistor",
+      "value": "100k",
+      "description": "RES Thick Film, 100kO, 1%, 1W, 100ppm/°C, 2512",
+      "sheet": "[1] HV_Precharge_Check.SchDoc"
+    },
+    {
+      "ref": "R7",
+      "part": "CRCW2512100KFKEG",
+      "type": "resistor",
+      "value": "100k",
+      "description": "RES Thick Film, 100kO, 1%, 1W, 100ppm/°C, 2512",
+      "sheet": "[1] HV_Precharge_Check.SchDoc"
+    },
+    {
+      "ref": "R8",
+      "part": "CRCW2512100KFKEG",
+      "type": "resistor",
+      "value": "100k",
+      "description": "RES Thick Film, 100kO, 1%, 1W, 100ppm/°C, 2512",
+      "sheet": "[1] HV_Precharge_Check.SchDoc"
+    },
+    {
+      "ref": "R9",
+      "part": "CRCW25122K00FKEG",
+      "type": "resistor",
+      "value": "2k",
+      "description": "RES Thick Film, 2kO, 1%, 1W, 100ppm/°C, 2512",
+      "sheet": "[1] HV_Precharge_Check.SchDoc"
+    },
+    {
+      "ref": "R10",
+      "part": "CRCW08054K99FKEA",
+      "type": "resistor",
+      "value": "4.9k",
+      "description": "RES Thick Film, 4.99kO, 1%, 0.125W, 100ppm/°C, 0805",
+      "sheet": "[1] HV_Precharge_Check.SchDoc"
+    },
+    {
+      "ref": "R11",
+      "part": "CRCW120612K0FKEA",
+      "type": "resistor",
+      "value": "12k",
+      "description": "RES Thick Film, 12kO, 1%, 0.25W, 100ppm/°C, 1206",
+      "sheet": "[1] HV_Precharge_Check.SchDoc"
+    },
+    {
+      "ref": "R12",
+      "part": "RC1206FR-074K7L",
+      "type": "resistor",
+      "value": "4.7k",
+      "description": "RES SMD 4.7K OHM 1% 1/4W 1206",
+      "sheet": "[1] HV_Precharge_Check.SchDoc"
+    },
+    {
+      "ref": "R13",
+      "part": "ERA-3AEB8660V",
+      "type": "resistor",
+      "value": "866",
+      "description": "ERA3AEB8660V",
+      "sheet": "[1] HV_Precharge_Check.SchDoc"
+    },
+    {
+      "ref": "R14",
+      "part": "CRCW1206787RFKEA",
+      "type": "resistor",
+      "value": "787",
+      "description": "RES Thick Film, 787O, 1%, 0.25W, 100ppm/°C, 1206",
+      "sheet": "[1] HV_Precharge_Check.SchDoc"
+    },
+    {
+      "ref": "R15",
+      "part": "ERJ-8BWFR010V",
+      "type": "resistor",
+      "value": "0.01",
+      "description": "RES 0.01 OHM 1% 1W 1206 ERJ-8BWFR010V",
+      "sheet": "[1] HV_Precharge_Check.SchDoc"
+    },
+    {
+      "ref": "R16",
+      "part": "ERJ-8BWFR010V",
+      "type": "resistor",
+      "value": "0.01",
+      "description": "RES 0.01 OHM 1% 1W 1206 ERJ-8BWFR010V",
+      "sheet": "[3] 12V_Stepdown.SchDoc"
+    },
+    {
+      "ref": "R17",
+      "part": "ERJ-8BWFR010V",
+      "type": "resistor",
+      "value": "0.01",
+      "description": "RES 0.01 OHM 1% 1W 1206 ERJ-8BWFR010V",
+      "sheet": "[3] 12V_Stepdown.SchDoc"
+    },
+    {
+      "ref": "R18",
+      "part": "ERJ-8BWFR010V",
+      "type": "resistor",
+      "value": "0.01",
+      "description": "RES 0.01 OHM 1% 1W 1206 ERJ-8BWFR010V",
+      "sheet": "[3] 12V_Stepdown.SchDoc"
+    },
+    {
+      "ref": "R19",
+      "part": "1206W4F5100T5E",
+      "type": "resistor",
+      "value": "1206W4F5100T5E",
+      "description": "250mW Thick Film Resistors 200V ±100ppm/? ±1% 510O 1206 Chip Resistor - Surface Mount ROHS",
+      "sheet": "[4] Connectors.SchDoc"
+    },
+    {
+      "ref": "R20",
+      "part": "1206W4F5100T5E",
+      "type": "resistor",
+      "value": "1206W4F5100T5E",
+      "description": "250mW Thick Film Resistors 200V ±100ppm/? ±1% 510O 1206 Chip Resistor - Surface Mount ROHS",
+      "sheet": "[4] Connectors.SchDoc"
+    },
+    {
+      "ref": "R21",
+      "part": "1206W4F5100T5E",
+      "type": "resistor",
+      "value": "1206W4F5100T5E",
+      "description": "250mW Thick Film Resistors 200V ±100ppm/? ±1% 510O 1206 Chip Resistor - Surface Mount ROHS",
+      "sheet": "[4] Connectors.SchDoc"
+    },
+    {
+      "ref": "R22",
+      "part": "CRCW08054K99FKEA",
+      "type": "resistor",
+      "value": "4.9k",
+      "description": "RES Thick Film, 4.99kO, 1%, 0.125W, 100ppm/°C, 0805",
+      "sheet": "[1] HV_Precharge_Check.SchDoc"
+    },
+    {
+      "ref": "R23",
+      "part": "RH0505K000FE02",
+      "type": "resistor",
+      "value": "RH0505K000FE02",
+      "description": "Fixed Resistor, Wire Wound, 50W, 5000ohm, 1% +/-Tol, 20ppm/Cel, Chassis Mount",
+      "sheet": "[1] HV_Precharge_Check.SchDoc"
+    },
+    {
+      "ref": "TP1",
+      "part": "5003",
+      "type": "test_point",
+      "value": "5003",
+      "description": "Test Point, Orange, 1-Pin THD, RoHS",
+      "sheet": "[1] HV_Precharge_Check.SchDoc"
+    },
+    {
+      "ref": "TP2",
+      "part": "5003",
+      "type": "test_point",
+      "value": "5003",
+      "description": "Test Point, Orange, 1-Pin THD, RoHS",
+      "sheet": "[1] HV_Precharge_Check.SchDoc"
+    },
+    {
+      "ref": "TP3",
+      "part": "5003",
+      "type": "test_point",
+      "value": "5003",
+      "description": "Test Point, Orange, 1-Pin THD, RoHS",
+      "sheet": "[1] HV_Precharge_Check.SchDoc"
+    },
+    {
+      "ref": "TP4",
+      "part": "5003",
+      "type": "test_point",
+      "value": "5003",
+      "description": "Test Point, Orange, 1-Pin THD, RoHS",
+      "sheet": "[1] HV_Precharge_Check.SchDoc"
+    },
+    {
+      "ref": "TP5",
+      "part": "5003",
+      "type": "test_point",
+      "value": "5003",
+      "description": "Test Point, Orange, 1-Pin THD, RoHS",
+      "sheet": "[1] HV_Precharge_Check.SchDoc"
+    },
+    {
+      "ref": "TP6",
+      "part": "5003",
+      "type": "test_point",
+      "value": "5003",
+      "description": "Test Point, Orange, 1-Pin THD, RoHS",
+      "sheet": "[1] HV_Precharge_Check.SchDoc"
+    },
+    {
+      "ref": "TP7",
+      "part": "5003",
+      "type": "test_point",
+      "value": "5003",
+      "description": "Test Point, Orange, 1-Pin THD, RoHS",
+      "sheet": "[2] SDC_Logic.SchDoc"
+    },
+    {
+      "ref": "TP8",
+      "part": "5003",
+      "type": "test_point",
+      "value": "5003",
+      "description": "Test Point, Orange, 1-Pin THD, RoHS",
+      "sheet": "[2] SDC_Logic.SchDoc"
+    },
+    {
+      "ref": "TP9",
+      "part": "5003",
+      "type": "test_point",
+      "value": "5003",
+      "description": "Test Point, Orange, 1-Pin THD, RoHS",
+      "sheet": "[3] 12V_Stepdown.SchDoc"
+    },
+    {
+      "ref": "TP10",
+      "part": "5003",
+      "type": "test_point",
+      "value": "5003",
+      "description": "Test Point, Orange, 1-Pin THD, RoHS",
+      "sheet": "[3] 12V_Stepdown.SchDoc"
+    },
+    {
+      "ref": "TP11",
+      "part": "5003",
+      "type": "test_point",
+      "value": "5003",
+      "description": "Test Point, Orange, 1-Pin THD, RoHS",
+      "sheet": "[1] HV_Precharge_Check.SchDoc"
+    },
+    {
+      "ref": "TP12",
+      "part": "5003",
+      "type": "test_point",
+      "value": "5003",
+      "description": "Test Point, Orange, 1-Pin THD, RoHS",
+      "sheet": "GLV_Stepdown.SchDoc"
+    },
+    {
+      "ref": "TP13",
+      "part": "5003",
+      "type": "test_point",
+      "value": "5003",
+      "description": "Test Point, Orange, 1-Pin THD, RoHS",
+      "sheet": "GLV_Stepdown.SchDoc"
+    },
+    {
+      "ref": "U1",
+      "part": "LM2903AVQDRQ1",
+      "type": "ic",
+      "value": "Comparator",
+      "description": "IC DUAL DIFF COMPARATOR 8-SOIC LM2903AVQDRQ1",
+      "sheet": "[1] HV_Precharge_Check.SchDoc"
+    },
+    {
+      "ref": "U2",
+      "part": "LM2903AVQDRQ1",
+      "type": "ic",
+      "value": "Comparator",
+      "description": "IC DUAL DIFF COMPARATOR 8-SOIC LM2903AVQDRQ1",
+      "sheet": "[1] HV_Precharge_Check.SchDoc"
+    },
+    {
+      "ref": "U3",
+      "part": "UA78L05CPK",
+      "type": "ic",
+      "value": "UA78L05CPK",
+      "description": "IC REG LINEAR 5V 100MA SOT89-3",
+      "sheet": "GLV_Stepdown.SchDoc"
+    }
+  ],
+  "nets": [
+    {
+      "id": "+5V",
+      "nodes": [],
+      "classGuess": null,
+      "nominalVGuess": null
+    },
+    {
+      "id": "12V",
+      "nodes": [],
+      "classGuess": null,
+      "nominalVGuess": null
+    },
+    {
+      "id": "60V_COMP",
+      "nodes": [],
+      "classGuess": null,
+      "nominalVGuess": null
+    },
+    {
+      "id": "60V LED",
+      "nodes": [],
+      "classGuess": null,
+      "nominalVGuess": null
+    },
+    {
+      "id": "AIR+",
+      "nodes": [],
+      "classGuess": null,
+      "nominalVGuess": null
+    },
+    {
+      "id": "AIR -",
+      "nodes": [],
+      "classGuess": null,
+      "nominalVGuess": null
+    },
+    {
+      "id": "AIR_COIL+",
+      "nodes": [],
+      "classGuess": null,
+      "nominalVGuess": null
+    },
+    {
+      "id": "AIR_COIL-",
+      "nodes": [],
+      "classGuess": null,
+      "nominalVGuess": null
+    },
+    {
+      "id": "Charge_ON",
+      "nodes": [],
+      "classGuess": null,
+      "nominalVGuess": null
+    },
+    {
+      "id": "comp",
+      "nodes": [],
+      "classGuess": null,
+      "nominalVGuess": null
+    },
+    {
+      "id": "comp in",
+      "nodes": [],
+      "classGuess": null,
+      "nominalVGuess": null
+    },
+    {
+      "id": "comp out",
+      "nodes": [],
+      "classGuess": null,
+      "nominalVGuess": null
+    },
+    {
+      "id": "GLV_BATT",
+      "nodes": [],
+      "classGuess": null,
+      "nominalVGuess": null
+    },
+    {
+      "id": "GND",
+      "nodes": [],
+      "classGuess": null,
+      "nominalVGuess": null
+    },
+    {
+      "id": "HV+",
+      "nodes": [],
+      "classGuess": null,
+      "nominalVGuess": null
+    },
+    {
+      "id": "HV-",
+      "nodes": [],
+      "classGuess": null,
+      "nominalVGuess": null
+    },
+    {
+      "id": "HV_IN",
+      "nodes": [],
+      "classGuess": null,
+      "nominalVGuess": null
+    },
+    {
+      "id": "POST RELAY",
+      "nodes": [],
+      "classGuess": null,
+      "nominalVGuess": null
+    },
+    {
+      "id": "Precharge_Resistor",
+      "nodes": [],
+      "classGuess": null,
+      "nominalVGuess": null
+    },
+    {
+      "id": "Pre_resis",
+      "nodes": [],
+      "classGuess": null,
+      "nominalVGuess": null
+    },
+    {
+      "id": "SDC_GND",
+      "nodes": [],
+      "classGuess": null,
+      "nominalVGuess": null
+    },
+    {
+      "id": "SDC RTN",
+      "nodes": [],
+      "classGuess": null,
+      "nominalVGuess": null
+    },
+    {
+      "id": "TS+",
+      "nodes": [],
+      "classGuess": null,
+      "nominalVGuess": null
+    },
+    {
+      "id": "TS_IN",
+      "nodes": [],
+      "classGuess": null,
+      "nominalVGuess": null
+    }
+  ],
+  "sheetCount": 5,
+  "warnings": [
+    "Nets are name-level only (net labels/ports/power-ports); pin-level connectivity (nodes) was not traced from the OLE fallback."
+  ],
+  "cite": "25E_Precharge_Board_v2 — Altium .BomDoc + .SchDoc (real project, extracted via cloud _parse_bomdoc + olefile SchDoc fallback)"
+}
