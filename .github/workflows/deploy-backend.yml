@@ -187,6 +187,7 @@ jobs:
           FORGE_LOG_LEVEL=INFO
           FORGE_PROTOCOL_VERSION=2.0
           FORGE_BOARD=25e
+          FORGE_SME_USE_SANDBOX=0
           GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
           MANAGED_AGENTS_API_KEY=${{ secrets.MANAGED_AGENTS_API_KEY }}
           GEMINI_SME_MODEL=gemini-3.5-flash
