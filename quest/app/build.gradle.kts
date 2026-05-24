@@ -55,6 +55,9 @@ android {
     release {
       isMinifyEnabled = false
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+      // Sign the release APK with the debug key so it sideloads onto the Quest
+      // without a separate keystore. Swap for a real release key for store/MDM.
+      signingConfig = signingConfigs.getByName("debug")
     }
   }
   buildFeatures {
