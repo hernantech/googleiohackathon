@@ -422,11 +422,17 @@ def _sme_channel(sme_id: str) -> str:
 
 
 def _format_tool_call(call: dict) -> str:
-    """One-line `tool(arg=val, …)` for a captured knowledge-tool call, e.g.
-    `lookup_datasheet(part=BQ79616, query=VIO)`. Defensive: a missing/odd shape
-    degrades to just the tool name."""
+    """One-line label for a captured tool call streamed to the SME's channel.
+
+    Knowledge lookups render `tool(arg=val, …)` (e.g.
+    `lookup_datasheet(part=BQ79616, query=VIO)`). A run_analysis *intermediate
+    sandbox step* (args={"step": "<line>"}) renders as `run_analysis ▸ <line>`
+    so the operator watches the computation unfold. Defensive: a missing/odd
+    shape degrades to just the tool name."""
     name = str(call.get("name") or call.get("tool") or "tool")
     args = call.get("args")
+    if isinstance(args, dict) and "step" in args and len(args) == 1:
+        return f"{name} ▸ {args['step']}"
     if isinstance(args, dict) and args:
         inner = ", ".join(f"{k}={v}" for k, v in args.items())
         return f"{name}({inner})"

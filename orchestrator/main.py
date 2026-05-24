@@ -147,15 +147,17 @@ app = FastAPI(title="Forge Orchestrator", version=settings.protocol_version)
 async def _startup() -> None:
     log.info("forge orchestrator up | integrations=%s", settings.integration_status())
     app.state.heartbeat = asyncio.create_task(_heartbeat_loop())
+    app.state.sandbox_keepwarm = asyncio.create_task(_sandbox_keepwarm_loop())
 
 
 @app.on_event("shutdown")
 async def _shutdown() -> None:
-    task = getattr(app.state, "heartbeat", None)
-    if task:
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+    for name in ("heartbeat", "sandbox_keepwarm"):
+        task = getattr(app.state, name, None)
+        if task:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
 
 async def _heartbeat_loop() -> None:
@@ -165,6 +167,28 @@ async def _heartbeat_loop() -> None:
         await asyncio.sleep(HEARTBEAT_S)
         with contextlib.suppress(Exception):
             bus.heartbeat()
+
+
+async def _sandbox_keepwarm_loop() -> None:
+    """Keep the single shared Antigravity compute sandbox HOT so run_analysis
+    never pays a cold-start. Each tick runs one cheap reuse interaction (which
+    also lazily creates the sandbox on the first tick) off the event loop. A
+    no-op when there is no GEMINI_API_KEY / google-genai (keepwarm_ping returns
+    False, the env is never created). Cancelled cleanly on shutdown."""
+    if not settings.gemini_api_key:
+        return  # offline boot: nothing to keep warm (07 §2.4)
+    try:
+        from orchestrator.genai_seams import (
+            SANDBOX_KEEPWARM_INTERVAL_S,
+            keepwarm_ping,
+        )
+    except Exception as e:  # noqa: BLE001 — google-genai absent though keyed
+        log.warning("sandbox keep-warm disabled (%s)", e)
+        return
+    while True:
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(keepwarm_ping)
+        await asyncio.sleep(SANDBOX_KEEPWARM_INTERVAL_S)
 
 
 @app.get("/healthz")
