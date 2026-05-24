@@ -5,6 +5,12 @@ name: Deploy orchestrator to Azure VM
 # branch push touching the backend so PRs are validated; deploy only runs on
 # main or a manual dispatch.
 #
+# SPEED: the build jobs run on GitHub's NATIVE arm64 runners (ubuntu-24.04-arm,
+# free for public repos) so arm64 wheels (grpcio, etc.) compile natively instead
+# of under QEMU emulation. Emulation was the old ~15 min bottleneck; native +
+# GHA layer cache brings cold builds to a couple of minutes and cached builds to
+# seconds. No setup-qemu-action is needed when the runner is already arm64.
+#
 # The observer (manager dashboard) is a SEPARATE, decoupled image with its own
 # build job. Per-job path gating (via the `changes` job below) keeps the two
 # decoupled: an observer-only edit does NOT rebuild the orchestrator, and an
@@ -63,7 +69,8 @@ jobs:
     needs: changes
     # Build the orchestrator when its inputs changed, or on a manual dispatch.
     if: ${{ needs.changes.outputs.orchestrator == 'true' || github.event_name == 'workflow_dispatch' }}
-    runs-on: ubuntu-latest
+    # Native arm64 runner → no QEMU emulation (see SPEED note at top of file).
+    runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
       packages: write
@@ -76,7 +83,6 @@ jobs:
         id: meta
         run: echo "image=${REGISTRY}/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')-orchestrator" >> "$GITHUB_OUTPUT"
 
-      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
@@ -104,7 +110,8 @@ jobs:
   build-and-push-observer:
     needs: changes
     if: ${{ needs.changes.outputs.observer == 'true' || github.event_name == 'workflow_dispatch' }}
-    runs-on: ubuntu-latest
+    # Native arm64 runner → no QEMU emulation (see SPEED note at top of file).
+    runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
       packages: write
@@ -117,7 +124,6 @@ jobs:
         id: meta
         run: echo "image=${REGISTRY}/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')-observer" >> "$GITHUB_OUTPUT"
 
-      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
@@ -182,6 +188,9 @@ jobs:
           FORGE_PROTOCOL_VERSION=2.0
           GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
           MANAGED_AGENTS_API_KEY=${{ secrets.MANAGED_AGENTS_API_KEY }}
+          GEMINI_SME_MODEL=gemini-3.5-flash
+          GEMINI_SNAPSHOT_MODEL=gemini-3-pro-preview
+          GEMINI_LIVE_MODEL=gemini-3.1-flash-live-preview
           LANGGRAPH_CHECKPOINTER=memory
           EOF
 
