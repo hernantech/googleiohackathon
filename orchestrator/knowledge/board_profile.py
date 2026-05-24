@@ -28,6 +28,9 @@ class Part(BaseModel):
     part: str
     role: str | None = None
     datasheet: str | None = None
+    #: provenance marker; "schematic_image" when minted from a parsed schematic
+    #: (09 §4 / §5.3). Documented YAML parts leave this None.
+    source: str | None = None
 
 
 class Rail(BaseModel):
@@ -44,6 +47,11 @@ class Net(BaseModel):
     max_voltage_v: float | None = None
     max_current_a: float | None = None
     test_point: str | None = None
+    #: provenance marker; "schematic_image" when minted from a parsed schematic
+    #: (09 §4 / §5.3). A schematic-image net carries NO limit fields — limits
+    #: stay sourced only from documented YAML / datasheet values. Documented YAML
+    #: nets leave this None.
+    source: str | None = None
 
 
 class TestPoint(BaseModel):
@@ -106,6 +114,64 @@ class BoardProfile(BaseModel):
             if proc.id == target:
                 return proc
         return None
+
+    # ── additive merge of schematic-derived topology (05 §6 / 09 §5.3) ──
+
+    def merge_schematic(self, sch: "object") -> "dict[str, int]":
+        """Merge a parsed `SchematicJSON`'s components/nets ADDITIVELY into this
+        in-memory profile, marking each minted entry `source="schematic_image"`.
+
+        Rules (09 §4, §5.3, 03 §3.3.6):
+          * Components add as `Part(ref, part)` ONLY when the ref is not already
+            documented — a documented YAML part is authoritative and never
+            overwritten. Minted parts carry no `role`/`datasheet`.
+          * Nets add as `Net(id, desc)` with NO limit fields
+            (`max_voltage_v`/`max_current_a` stay None) — a guessed
+            `nominalVGuess` is NEVER promoted to a documented limit. Documented
+            YAML nets are never overwritten.
+          * Idempotent: re-ingesting the same schematic adds nothing new.
+
+        Returns a small `{"parts_added", "nets_added"}` count for the caller's
+        cite/log. Mutates this profile in place; never raises (01 §7)."""
+        existing_part_refs = {p.ref.casefold() for p in self.parts}
+        existing_net_ids = {n.id.casefold() for n in self.nets}
+        parts_added = 0
+        nets_added = 0
+
+        for c in getattr(sch, "components", None) or []:
+            ref = (getattr(c, "ref", "") or "").strip()
+            if not ref or ref.casefold() in existing_part_refs:
+                continue
+            self.parts.append(
+                Part(
+                    ref=ref,
+                    part=(getattr(c, "part", None) or getattr(c, "type", None) or ref),
+                    role=getattr(c, "description", None),
+                    datasheet=None,  # no documented datasheet from a vision parse
+                    source="schematic_image",
+                )
+            )
+            existing_part_refs.add(ref.casefold())
+            parts_added += 1
+
+        for n in getattr(sch, "nets", None) or []:
+            nid = (getattr(n, "id", "") or "").strip()
+            if not nid or nid.casefold() in existing_net_ids:
+                continue
+            self.nets.append(
+                Net(
+                    id=nid,
+                    desc=getattr(n, "classGuess", None),
+                    # NO limit fields: nominalVGuess is advisory, never a limit.
+                    max_voltage_v=None,
+                    max_current_a=None,
+                    source="schematic_image",
+                )
+            )
+            existing_net_ids.add(nid.casefold())
+            nets_added += 1
+
+        return {"parts_added": parts_added, "nets_added": nets_added}
 
 
 # ───────────────────────── loading (§2, §6) ──────────────────────────

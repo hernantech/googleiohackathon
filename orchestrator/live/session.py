@@ -42,18 +42,93 @@ def live_model() -> str:
     return os.getenv("GEMINI_LIVE_MODEL", DEFAULT_LIVE_MODEL)
 
 
+#: System instruction for the Live agent: chat normally, call a tool ONLY when
+#: warranted (the user does NOT want every utterance routed through the guild).
+LIVE_SYSTEM_INSTRUCTION = (
+    "You are Forge's live voice assistant at an electronics workbench, advising "
+    "a HUMAN operator. Forge actuates nothing — you only talk and recommend. "
+    "Chat naturally and answer simple questions yourself. DELIBERATELY call a "
+    "tool only when it is warranted:\n"
+    "  • call summon_guild(topic) when the operator's question needs expert "
+    "deliberation from the specialist engineering guild (power, signal, "
+    "firmware, layout, safety, …) — e.g. diagnosing a bring-up failure or a "
+    "design trade-off;\n"
+    "  • call parse_schematic(source_uri, hint) when the operator references or "
+    "points at a schematic image/PDF and you need its components/nets;\n"
+    "  • call lookup_schematic(query) to answer follow-ups about a schematic you "
+    "already parsed this session (e.g. 'what's on net 3V3?').\n"
+    "Never invent a voltage/current setpoint; schematic data is advisory only."
+)
+
+
+def _live_guild_tool_decl() -> dict:
+    """The summon_guild function declaration offered to the Live model. The
+    existing main.py on_tool_call runs the guild and injects the merged headline,
+    so this mostly needs the DECLARATION."""
+    return {
+        "name": "summon_guild",
+        "description": (
+            "Consult the SME guild of specialist engineers to deliberate on the "
+            "operator's question and return a merged recommendation. Use when "
+            "expert, multi-discipline deliberation is warranted (a bring-up "
+            "failure, a design trade-off, a safety-relevant step), NOT for small "
+            "talk or simple factual answers you can give directly."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "topic": {
+                    "type": "string",
+                    "description": "the operator's question / topic for the guild",
+                },
+            },
+            "required": ["topic"],
+        },
+    }
+
+
+def _live_tool():
+    """Build the combined Live `Tool` declaring summon_guild + the schematic
+    functions, or None if google-genai is unavailable (graceful, 01 §7)."""
+    try:
+        from google.genai import types  # optional [live] dep
+
+        from orchestrator.live.schematic_tools import _LIVE_FUNCTION_DECLS
+
+        decls = [_live_guild_tool_decl(), *_LIVE_FUNCTION_DECLS]
+        return types.Tool(function_declarations=decls)
+    except Exception as e:  # noqa: BLE001 — Live just won't offer tools
+        log.warning("live tool declarations unavailable (%s); Live runs without them", e)
+        return None
+
+
 def _live_config():
     """LiveConnectConfig for the always-on path: AUDIO out (TTS back to the
     client) + input/output transcription so final transcripts route to the
     graph. No transcode is configured — the device emits PCM + JPEG and we relay
-    the bytes verbatim into the right realtime-input slot (00 §4.1)."""
+    the bytes verbatim into the right realtime-input slot (00 §4.1).
+
+    Also declares function tools so the Live model can chat normally and
+    DELIBERATELY EMIT a function-call when warranted (voice → Gemini decides →
+    tool call): `summon_guild(topic)` for expert deliberation and
+    `parse_schematic(source_uri, hint)` / `lookup_schematic(query)` for a
+    schematic image. main.py's on_tool_call dispatches by name — summon_guild →
+    the guild (engine.run), the schematic tools → the SAME shared dispatch seam
+    the SME tool-loop uses. A `system_instruction` tells the agent WHEN to call
+    each. Declarations + system_instruction are additive + best-effort: if tools
+    can't be built we connect without them (graceful, 01 §7)."""
     from google.genai import types  # optional [live] dep
 
-    return types.LiveConnectConfig(
+    kwargs: dict = dict(
         response_modalities=["AUDIO"],
         input_audio_transcription={},
         output_audio_transcription={},
+        system_instruction=LIVE_SYSTEM_INSTRUCTION,
     )
+    tool = _live_tool()
+    if tool is not None:
+        kwargs["tools"] = [tool]
+    return types.LiveConnectConfig(**kwargs)
 
 
 class GenaiLiveSession:

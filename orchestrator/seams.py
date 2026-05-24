@@ -68,6 +68,46 @@ def stub_snapshot_model_call(jpeg_bytes: bytes, context: str, model_name: str) -
     )
 
 
+def stub_schematic_model_call(
+    image_bytes: bytes, mime_type: str, hint, model_name: str
+) -> str:
+    """SchematicModelCall stub for parse_schematic. Returns a minimal valid
+    SchematicJSON string (empty topology, a warning) so the parser produces a
+    well-formed low-confidence result with no model wired — zero-config boot
+    (07 §2.4). Phase 3 wires Gemini vision (genai_seams.real_parse_schematic)."""
+    import json
+
+    return json.dumps({
+        "source": {"kind": "pdf" if mime_type == "application/pdf" else "image",
+                   "uri": None, "model": model_name},
+        "confidence": 0.0,
+        "components": [],
+        "nets": [],
+        "sheetCount": 1,
+        "warnings": [
+            f"[stub vision · {model_name}] {len(image_bytes)} bytes received; "
+            "no live model wired (ROADMAP Phase 3)."
+        ],
+        "cite": f"schematic (stub) · {model_name}",
+    })
+
+
+def build_parse_schematic():
+    """Select the schematic vision model_call: real Gemini vision (forced JSON +
+    response_schema on SNAPSHOT_MODEL) when GEMINI_API_KEY is set and google-genai
+    is importable, else the stub. Mirrors build_snapshot_model_call's selection."""
+    log = logging.getLogger("forge.seams")
+    if os.getenv("GEMINI_API_KEY"):
+        try:
+            from orchestrator.genai_seams import real_parse_schematic
+
+            log.info("real schematic vision model_call active (gemini vision)")
+            return real_parse_schematic
+        except Exception as e:  # noqa: BLE001  google-genai missing or import error
+            log.warning("real parse_schematic model_call unavailable (%s); using stub", e)
+    return stub_schematic_model_call
+
+
 def build_snapshot_model_call():
     """Select the snapshot (📷) vision model_call: real Gemini vision when
     GEMINI_API_KEY is set and google-genai is importable, else the stub.

@@ -610,6 +610,56 @@ _TOOL_SCHEMAS = [
         },
     },
     {
+        "name": "parse_schematic",
+        "description": (
+            "Parse a schematic PHOTO / PDF page into structured JSON "
+            "(components, reference designators, values, nets, pin↔net "
+            "connections) using vision. Use ONCE per session when the operator "
+            "has supplied a schematic image and you need its topology. "
+            "`source_uri` is a snapshot:// frame ref (or mem: frame uri) or an "
+            "uploaded file path; `hint` optionally names the suspected board / "
+            "section. The result is ADVISORY model-derived context: it carries "
+            "confidence/warnings and NEVER a documented limit — still use "
+            "get_documented_limit for any setpoint. After parsing, query it with "
+            "lookup_schematic (or the board lookups, which now answer from it)."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "source_uri": {
+                    "type": "STRING",
+                    "description": "snapshot:// frame ref, mem: frame uri, or file path",
+                },
+                "hint": {
+                    "type": "STRING",
+                    "description": "optional: suspected board / part / section",
+                },
+            },
+            "required": ["source_uri"],
+        },
+    },
+    {
+        "name": "lookup_schematic",
+        "description": (
+            "Query the schematic parsed earlier this session (via "
+            "parse_schematic) by reference designator, net name, or part — e.g. "
+            "'what connects to net 3V3?', 'which pin of U4 is VOUT?'. Returns the "
+            "matching components/nets WITHOUT re-running vision. The data is "
+            "advisory (model-derived); limits still come from "
+            "get_documented_limit, never from a nominalVGuess/classGuess."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "query": {
+                    "type": "STRING",
+                    "description": "a ref (U4), net (3V3), or part name",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
         "name": "run_analysis",
         "description": (
             "Run a quantitative analysis as REAL Python code in a compute "
@@ -640,6 +690,96 @@ _TOOL_SCHEMAS = [
 ]
 
 
+# ── parse_schematic tool body (09 §5.1 / §5.3) ──────────────────────────────
+#
+# Resolves the source bytes, runs the injected-ModelCall vision parser, and
+# INGESTS the result into the per-session KnowledgeAdapter (so lookup_board_doc /
+# get_documented_limit answer from it with no SME-side change). The vision call
+# is real_parse_schematic (forced JSON + response_schema on SNAPSHOT_MODEL); with
+# no key / google-genai absent the parser degrades to a low-confidence stub.
+
+def _resolve_schematic_bytes(source_uri: str) -> "bytes | None":
+    """Resolve a schematic source_uri to raw image/PDF bytes, or None.
+
+    Accepts:
+      * snapshot://<frameUri> / mem:<frameUri> → the shared frame store
+        (orchestrator.main.frame_store, the SAME store analyze_snapshot uses);
+      * a local file path → its bytes.
+    Never raises (a bad uri / missing frame → None → the parser stubs). The
+    frame-store import is lazy so this module loads without main.py side-effects
+    and tests can monkeypatch it."""
+    uri = (source_uri or "").strip()
+    if not uri:
+        return None
+    try:
+        if uri.startswith("snapshot://") or uri.startswith("mem:"):
+            frame_uri = uri[len("snapshot://"):] if uri.startswith("snapshot://") else uri
+            from orchestrator.main import frame_store  # lazy: shared session store
+
+            return frame_store.get_jpeg(frame_uri)
+        p = Path(uri)
+        if p.is_file():
+            return p.read_bytes()
+    except Exception as e:  # noqa: BLE001 — degrade to stub
+        log.warning("resolve schematic bytes for %r failed (%s)", source_uri, e)
+    return None
+
+
+def _dispatch_parse_schematic(
+    source_uri: str, hint: object, knowledge: KnowledgeAdapter,
+) -> dict:
+    """Run the vision parser on source_uri's bytes, ingest into the adapter, and
+    return the SchematicJSON-as-dict (+ merge counts). Never raises (01 §7)."""
+    from orchestrator.schematic.parser import parse_schematic
+
+    hint_s = str(hint) if hint else None
+    image_bytes = _resolve_schematic_bytes(source_uri)
+    if image_bytes is None:
+        return {
+            "error": f"could not resolve schematic source {source_uri!r}",
+            "note": "expected a snapshot:// frame ref, mem: uri, or a readable file path",
+        }
+    sch = parse_schematic(
+        image_bytes, hint_s,
+        model_call=real_parse_schematic,
+        model_name=SNAPSHOT_MODEL,
+        source_uri=source_uri,
+    )
+    merge = knowledge.ingest_schematic(sch)
+    out = sch.model_dump()
+    out["_ingest"] = merge
+    return out
+
+
+#: The two schematic SME tools' declarations, sliced out of _TOOL_SCHEMAS so the
+#: Live path can declare the SAME tools without duplicating the schema (09 §5.1).
+SCHEMATIC_TOOL_NAMES = ("parse_schematic", "lookup_schematic")
+SCHEMATIC_TOOL_SCHEMAS = [t for t in _TOOL_SCHEMAS if t["name"] in SCHEMATIC_TOOL_NAMES]
+
+
+def dispatch_schematic_tool(
+    name: str, args: dict, knowledge: KnowledgeAdapter,
+) -> "dict | None":
+    """Shared, framework-agnostic dispatch for the schematic tools — the SINGLE
+    seam BOTH the SME tool-loop (`_dispatch_tool`) AND the Gemini Live session
+    (`orchestrator.live.schematic_tools`) reach the parse pipeline through, so
+    the logic is not duplicated.
+
+    Returns the JSON-able function-response payload for `parse_schematic` /
+    `lookup_schematic`, or None when `name` is not a schematic tool (so a caller
+    can fall through to its own routing). Never raises (01 §7)."""
+    try:
+        if name == "parse_schematic":
+            return _dispatch_parse_schematic(
+                str(args.get("source_uri", "")), args.get("hint"), knowledge)
+        if name == "lookup_schematic":
+            return knowledge.lookup_schematic(str(args.get("query", "")))
+    except Exception as e:  # noqa: BLE001 — never fail-stop a tool dispatch
+        log.warning("dispatch_schematic_tool(%s) failed (%s)", name, e)
+        return {"error": f"schematic tool {name!r} failed: {e}"}
+    return None
+
+
 def _dispatch_tool(
     name: str, args: dict, knowledge: KnowledgeAdapter,
     on_step: "Callable[[str], None] | None" = None,
@@ -665,6 +805,10 @@ def _dispatch_tool(
             str(args.get("target", "")), str(args.get("kind", "")),
         )
         return res.model_dump()
+    if name in SCHEMATIC_TOOL_NAMES:
+        # shared seam — the SAME dispatch the Live path uses (no duplication).
+        result = dispatch_schematic_tool(name, args, knowledge)
+        return result if result is not None else {"error": f"unknown tool {name!r}"}
     if name == "run_analysis":
         computed = run_analysis(str(args.get("task", "")), on_step=on_step)
         if computed is None:
@@ -1016,6 +1160,43 @@ def real_snapshot_model_call(jpeg_bytes: bytes, context: str, model_name: str) -
     except Exception as e:  # noqa: BLE001
         log.warning("real_snapshot_model_call failed (%s); using stub", e)
         return _stub.stub_snapshot_model_call(jpeg_bytes, context, model_name)
+
+
+def real_parse_schematic(
+    image_bytes: bytes, mime_type: str, hint: "str | None", model_name: str,
+) -> str:
+    """The real schematic-vision call: one forced-JSON generate_content on the
+    snapshot vision model (SNAPSHOT_MODEL, gemini-3-pro-preview) with the §4
+    SchematicJSON response_schema. Returns the raw JSON string the parser
+    validates. Reuses _genai() exactly like real_snapshot_model_call.
+
+    Never raises — on any error it returns "" so parse_schematic degrades to a
+    low-confidence stub (01 §7)."""
+    try:
+        from google.genai import types  # optional [live] dep
+
+        from orchestrator.schematic.parser import PARSE_PROMPT
+        from orchestrator.schematic.schema import SchematicJSON
+
+        model = model_name or SNAPSHOT_MODEL
+        prompt = PARSE_PROMPT
+        if hint:
+            prompt += f"\n\nOperator hint: {hint}"
+        r = _genai().models.generate_content(
+            model=model,
+            contents=[
+                types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
+                prompt,
+            ],
+            config={
+                "response_mime_type": "application/json",
+                "response_schema": SchematicJSON,
+            },
+        )
+        return r.text or ""
+    except Exception as e:  # noqa: BLE001 — parse_schematic degrades to a stub
+        log.warning("real_parse_schematic failed (%s); parser will stub", e)
+        return ""
 
 
 def build_real_deps(knowledge: KnowledgeAdapter) -> GraphDeps:
