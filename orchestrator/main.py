@@ -342,8 +342,24 @@ def _make_live_graph_hooks(session_id: str):
         return ctx.state.liveSpeakerScript if result.status != "paused" else None
 
     async def on_tool_call(name: str, args: dict, call_id: str) -> dict | None:
-        # A Live function-call (e.g. summon_guild) drives the guild deliberation;
-        # the structured result is injected back as a function-response (00 §3).
+        # DISPATCH BY NAME (additive): Gemini Live chats normally and DELIBERATELY
+        # calls a tool when warranted. Two routes, neither disturbs the existing
+        # transcript path (on_transcript still drives the main pipeline):
+        #   * parse_schematic / lookup_schematic → the SAME shared schematic seam
+        #     the SME tool-loop uses (genai_seams.dispatch_schematic_tool), via
+        #     the live handler; ingests into the process knowledge adapter.
+        #   * summon_guild (or anything else) → the existing guild deliberation
+        #     (engine.run → merged opinion), unchanged.
+        from orchestrator.live.schematic_tools import (
+            is_schematic_tool,
+            make_live_schematic_handler,
+        )
+
+        if is_schematic_tool(name):
+            handler = make_live_schematic_handler(knowledge)
+            return await handler(name, args or {}, call_id)
+
+        # summon_guild path (unchanged): run the guild, inject the merged result.
         transcript = str(args.get("topic") or args.get("text") or name)
         emit, drain = _make_loop_publisher(asyncio.get_running_loop())
 
