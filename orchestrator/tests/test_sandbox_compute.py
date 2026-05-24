@@ -327,12 +327,18 @@ def test_run_analysis_wired_into_sme_tool_loop_and_streams(monkeypatch):
     """run_analysis is a real SME tool: the Flash SME calls it, the sandbox steps
     stream through the #12 on_tool_call sink as run_analysis 'step' calls, and the
     computed value reaches the model before the final SmeResponse. Exercises the
-    REAL run_analysis path (no monkeypatch of run_analysis itself)."""
+    REAL run_analysis path (no monkeypatch of run_analysis itself).
+
+    Pins the Flash tool-loop with FORGE_SME_USE_SANDBOX=0 (the per-SME managed
+    agent is now the default summon path; run_analysis is a tool the Flash loop
+    reaches, which is what this test exercises)."""
     pytest.importorskip("google.genai.types")
     import json as _json
 
     from orchestrator.knowledge import KnowledgeAdapter
     from orchestrator.proto.events import SummonGuild
+
+    monkeypatch.setenv("FORGE_SME_USE_SANDBOX", "0")  # exercise the Flash loop
 
     sandbox = _FakeInteractions(env_id="env-LOOP", sse_events=[
         _code_call_delta("print('RESULT:', 0.12+0.08+0.25, 'A')"),

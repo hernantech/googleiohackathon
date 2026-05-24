@@ -940,19 +940,38 @@ def _run_sme_tool_loop(
 
 # ── DEFAULT per-SME managed-agent path (Antigravity Interactions API) ────────
 #
-# DEFAULT ON. Each SME runs as a REAL, TOOL-CAPABLE Antigravity managed agent via
-# a bounded interactions.create() tool-loop (the Interactions API exposes custom
-# function tools — verified against google-genai 2.6.0: create() takes
-# `tools=[FunctionParam]`, the agent emits FunctionCallStep(s) and goes
-# status="requires_action", and we continue with `previous_interaction_id` +
-# FunctionResultStepParam input; final answer forced via response_mime_type=JSON).
-# The SAME knowledge tools + run_analysis the Flash loop declares are declared to
-# the interaction; each emitted function-call is executed against the per-session
-# KnowledgeAdapter through the shared `_dispatch_tool` seam, so the SME stays
-# GROUNDED (datasheets/limits) and CITED exactly like the Flash path. Each SME
-# keeps its OWN warm sandbox (a per-SME environment_id in _sme_env) reused across
-# turns, so the ~70s cold-start is paid ONCE per SME (prewarm_smes() pays it up
-# front at startup, off the critical path; the keep-warm loop pings it).
+# DEFAULT ON. Each SME runs as a REAL, TOOL-CAPABLE per-SME managed agent — a
+# HYBRID grounded by genuine custom function tools, finalized in the SME's own
+# warm Antigravity sandbox.
+#
+# WHY a hybrid (the live-verified shape of the Interactions API, google-genai
+# 2.6.0): custom function tools ARE supported on interactions.create — the agent
+# emits FunctionCallStep(s), goes status="requires_action", and we continue with
+# previous_interaction_id + FunctionResultStepParam — BUT ONLY on a MODEL-based
+# interaction (model=FLASH_MODEL). The Antigravity managed AGENT (agent=...,
+# which is what owns the warm per-SME `environment`) REJECTS custom function
+# tools at runtime (400 "Tool 'function' is not allowed when interacting with
+# this agent" — it only allows its built-in Code Execution / Search / URL
+# Context). So we cannot host our knowledge tools ON the managed agent directly.
+#
+# The hybrid keeps SMEs both GROUNDED and genuinely SANDBOXED:
+#   1. GATHER — a bounded model-based interactions.create() tool-loop
+#      (_gather_grounding_via_tools) declares the SAME knowledge tools +
+#      run_analysis the Flash loop uses, executes each emitted function-call
+#      against the per-session KnowledgeAdapter via the shared `_dispatch_tool`
+#      seam, streams each call (and run_analysis sub-steps) via on_tool_call, and
+#      continues the interaction with the function results. This is real custom
+#      tool-calling on the Interactions API.
+#   2. REASON — the retrieved, CITED grounding is folded into an ENRICHED
+#      briefing fed to the SME's per-SME Antigravity managed agent (agent=...,
+#      environment=<warm per-SME env>) for the final SmeResponse. The agent can
+#      also do native code-exec math here.
+# Documented-limit citations are attached by the orchestrator (never the model),
+# exactly like the Flash path.
+#
+# Each SME keeps its OWN warm sandbox (a per-SME environment_id in _sme_env)
+# reused across turns, so the ~70s cold-start is paid ONCE per SME (prewarm_smes()
+# pays it up front at startup, off the critical path; the keep-warm loop pings it).
 #
 # `FORGE_SME_USE_SANDBOX=0` is the escape hatch BACK to the pure Flash tool-loop
 # (`_run_sme_tool_loop`). Any sandbox error degrades to the Flash loop, then to
@@ -960,13 +979,12 @@ def _run_sme_tool_loop(
 # absent → never selected (offline boot, tests pass).
 #
 # NB this is distinct from the SINGLE shared run_analysis compute sandbox above:
-# that is a per-CALL "do real math" tool; THIS is a per-SME agent environment
-# that runs the SME's whole tool-loop turn (and reaches run_analysis as one of
-# its declared tools, the same way the Flash loop does).
+# that is a per-CALL "do real math" tool the gather loop invokes; THIS is the
+# per-SME agent environment that runs the SME's final reasoning turn.
 
-#: Cap on tool-calling rounds per SME interaction turn (mirrors the Flash loop's
-#: SME_MAX_TOOL_ROUNDS so the managed agent concludes within a bounded number of
-#: retrieve->reason->retrieve rounds before being forced to a final SmeResponse).
+#: Cap on tool-calling rounds in the grounding loop (mirrors the Flash loop's
+#: SME_MAX_TOOL_ROUNDS so grounding concludes within a bounded number of
+#: retrieve->reason->retrieve rounds before the final managed-agent turn).
 SME_SANDBOX_MAX_TOOL_ROUNDS = int(
     os.getenv("GEMINI_SME_SANDBOX_MAX_TOOL_ROUNDS",
               os.getenv("GEMINI_SME_MAX_TOOL_ROUNDS", "5")))
@@ -1063,92 +1081,62 @@ def _function_call_steps(it: object) -> list[object]:
     return out
 
 
-#: Persona/brief framing for the managed-agent tool turn — mirrors the Flash
-#: loop's `base`, telling the SME to PULL grounding via its tools before
-#: concluding (and to use run_analysis ONLY for real math).
-def _sandbox_turn_input(brief: str, siblings: list[str]) -> str:
+#: Grounding-loop opener: tell the model to PULL board knowledge via the custom
+#: function tools (and use run_analysis ONLY for real math) before summarizing.
+def _grounding_loop_input(brief: str, siblings: list[str]) -> str:
     return (
         f"=== Guild brief ===\n{brief}\n\n"
         f"Other SMEs consulted in parallel: {siblings or 'none'}\n\n"
-        "You have tools to PULL board knowledge: lookup_datasheet, "
-        "lookup_board_doc, get_documented_limit (+ parse_schematic / "
-        "lookup_schematic for a supplied schematic image). Call them as needed to "
-        "ground your answer BEFORE concluding; you may call several in sequence. "
-        "You ALSO have run_analysis, which runs REAL Python in a compute sandbox — "
-        "use it ONLY to actually CALCULATE a number from inputs you already have. "
-        "Do NOT invent any voltage/current setpoint — only cite values you obtained "
-        "from get_documented_limit. When you have enough, stop calling tools."
+        "Before any reasoning, RETRIEVE the board facts needed to answer using "
+        "your tools: lookup_datasheet, lookup_board_doc, get_documented_limit "
+        "(+ parse_schematic / lookup_schematic for a supplied schematic image). "
+        "Call them as needed; you may call several in sequence. You ALSO have "
+        "run_analysis, which runs REAL Python in a compute sandbox — use it ONLY "
+        "to actually CALCULATE a number from inputs you already have. Do NOT "
+        "invent any voltage/current setpoint — only the documented values you "
+        "obtain from get_documented_limit are trustworthy. When you have gathered "
+        "enough, stop calling tools and briefly summarize what you found, quoting "
+        "the exact retrieved facts (datasheet page / board-doc section / "
+        "documented limit + its source)."
     )
 
 
-#: The forced-JSON final-answer instruction for the managed-agent turn (mirrors
-#: the Flash loop's final_instructions; paired with response_mime_type=JSON).
-_SANDBOX_FINAL_INSTRUCTIONS = (
-    "You are out of tool calls. Conclude NOW with what you have retrieved — do "
-    "NOT say you still need to look something up. Reply with ONE JSON object: "
-    '{"confidence": <0-1>, "claim": "<one-sentence answer>", '
-    '"rationale": "<2-3 sentences; CITE the specific datasheet page / board-doc '
-    'section / documented limit you retrieved>", '
-    '"proposedAction": null OR {"tool": "set_psu|probe_net|serial_send|flash_mcu|inspect_closeup", '
-    '"args": {"target":"<net>","voltage_v":<n>,...}, '
-    '"instruction": "<imperative step for the operator>", "risk": "LOW|MEDIUM|HIGH"}}. '
-    "Use proposedAction only when a concrete operator step is warranted; else null. "
-    "Do NOT invent any voltage/current setpoint — only cite values you obtained "
-    "from get_documented_limit."
-)
-
-
-def _summon_via_sandbox(
-    sme_id: str, summon: SummonGuild, system: str, brief: str,
-    knowledge: KnowledgeAdapter | None = None,
+def _gather_grounding_via_tools(
+    sme_id: str, system: str, brief: str, siblings: list[str],
+    knowledge: KnowledgeAdapter,
     on_tool_call: "Callable[[dict], None] | None" = None,
-) -> dict:
-    """Run ONE SME turn as a real, TOOL-CAPABLE Antigravity managed agent in the
-    SME's warm sandbox and return the parsed final SmeResponse dict.
+) -> tuple[str, list[dict]]:
+    """GATHER step of the hybrid: a bounded MODEL-based interactions.create()
+    tool-loop that pulls cited grounding for this SME via the custom knowledge
+    tools (+ run_analysis), then summarizes it.
 
-    Mirrors the Flash `_run_sme_tool_loop` over interactions.create: the persona
-    is the agent's `system_instruction`, the grounded briefing is the `input`, and
-    the SAME knowledge tools + run_analysis are declared via `tools=`. When the
-    agent emits FunctionCallStep(s) (status="requires_action") we execute each
-    against the per-session KnowledgeAdapter through the shared `_dispatch_tool`
-    seam, stream each completed call via `on_tool_call`, and CONTINUE the same
-    interaction (`previous_interaction_id` + FunctionResultStepParam input),
-    bounded by SME_SANDBOX_MAX_TOOL_ROUNDS. Once the agent stops calling tools (or
-    the cap is hit) we make one final forced-JSON turn for the SmeResponse — the
-    orchestrator still attaches the documented-limit citation (never the model).
+    Custom function tools work on a model-based interaction (NOT on the managed
+    agent — see the section header), so we declare _sme_interaction_tools() to a
+    model=FLASH_MODEL interaction, execute each emitted FunctionCallStep against
+    the per-session KnowledgeAdapter via the shared `_dispatch_tool` seam, stream
+    each call (and run_analysis sub-steps) through `on_tool_call`, and continue
+    the SAME interaction with the FunctionResultStepParam input until the model
+    stops calling tools or SME_SANDBOX_MAX_TOOL_ROUNDS is hit.
 
-    Raises on failure → real_summon_one's envelope falls back to the Flash loop,
-    then the stub (never-fail-stop, 01 §7). The per-SME environment is reused
-    across turns (warm)."""
-    env = _get_sme_env(sme_id)
-    if env is None:
-        raise RuntimeError(f"per-SME sandbox unavailable for {sme_id}")
-
+    Returns (grounding_summary_text, tool_calls). The summary + the raw retrieved
+    tool results are folded into the enriched briefing for the final managed-agent
+    reasoning turn. Never raises here — the caller (_summon_via_sandbox) is wrapped
+    by real_summon_one's fallback."""
     client = _genai()
     tools = _sme_interaction_tools()
-    siblings = [s for s in summon.smes if s != sme_id]
-    knowledge_for_call = knowledge or KnowledgeAdapter()
+    tool_calls: list[dict] = []
 
-    # Round 1: open the interaction with the brief + tool declarations.
     it = client.interactions.create(
-        agent=ANTIGRAVITY_AGENT,
-        input=_sandbox_turn_input(brief, siblings),
+        model=FLASH_MODEL,  # custom tools are allowed on a MODEL interaction
+        input=_grounding_loop_input(brief, siblings),
         system_instruction=system,
-        environment=env,  # reuse the SME's warm sandbox; NOT environment_id=
         tools=tools,
     )
-    if on_tool_call is not None:
-        try:
-            on_tool_call({"name": "managed_agent", "args": {"sme": sme_id}, "result": None})
-        except Exception as e:  # noqa: BLE001 — a bad sink must not fail-stop
-            log.warning("on_tool_call (managed_agent) sink raised (%s); continuing", e)
 
-    # Bounded retrieve->reason->retrieve loop: while the agent is waiting on tool
-    # calls, execute them and continue the SAME interaction with the results.
     for _ in range(max(1, SME_SANDBOX_MAX_TOOL_ROUNDS)):
         calls = _function_call_steps(it)
         if not calls:
-            break  # the agent concluded (no pending function calls)
+            break  # the model concluded gathering
         result_steps: list[dict] = []
         for fc in calls:
             name = getattr(fc, "name", "") or ""
@@ -1166,8 +1154,9 @@ def _summon_via_sandbox(
                     except Exception as e:  # noqa: BLE001
                         log.warning("on_tool_call (step) sink raised (%s); continuing", e)
 
-            result = _dispatch_tool(name, args, knowledge_for_call, on_step)
+            result = _dispatch_tool(name, args, knowledge, on_step)
             call = {"name": name, "args": args, "result": result}
+            tool_calls.append(call)
             if on_tool_call is not None:
                 try:
                     on_tool_call(call)
@@ -1181,21 +1170,105 @@ def _summon_via_sandbox(
             })
         # continue the SAME interaction: feed the function results back.
         it = client.interactions.create(
-            agent=ANTIGRAVITY_AGENT,
+            model=FLASH_MODEL,
             input=result_steps,
-            environment=env,
             tools=tools,
             previous_interaction_id=getattr(it, "id", None),
         )
 
-    # Final forced-JSON turn (no tools so structured JSON is allowed), continuing
-    # the interaction so the agent answers from everything it retrieved.
+    summary = getattr(it, "output_text", None) or _interaction_text(it) or ""
+    return summary, tool_calls
+
+
+def _enriched_briefing(brief: str, grounding: str, tool_calls: list[dict]) -> str:
+    """Fold the gathered grounding (the model's summary + the raw retrieved tool
+    results, bounded) into the briefing fed to the per-SME managed agent for the
+    final reasoning turn. The raw results carry the exact cited facts (datasheet
+    pages, documented limits + their sources) so the agent reasons from real,
+    cited data — never invents a setpoint."""
+    parts = [f"=== Guild brief ===\n{brief}"]
+    if grounding.strip():
+        parts.append("=== Retrieved grounding (you gathered this) ===\n" + grounding.strip())
+    if tool_calls:
+        try:
+            facts = json.dumps(
+                [{"tool": c["name"], "args": c.get("args", {}), "result": c.get("result")}
+                 for c in tool_calls],
+                default=str,
+            )[:6000]
+            parts.append("=== Retrieved facts (raw, cite these) ===\n" + facts)
+        except Exception:  # noqa: BLE001 — never fail-stop on a serialization hiccup
+            pass
+    return "\n\n".join(parts)
+
+
+#: The final-answer instruction for the per-SME managed-agent reasoning turn —
+#: tells the agent to conclude with the strict SmeResponse JSON from the gathered,
+#: cited grounding. The robust _loads() tolerates fences/prose around the JSON.
+_SANDBOX_FINAL_INSTRUCTIONS = (
+    "Using ONLY the retrieved grounding above, conclude NOW — do NOT say you "
+    "still need to look something up. Reply with ONE JSON object (no prose before "
+    "or after): "
+    '{"confidence": <0-1>, "claim": "<one-sentence answer>", '
+    '"rationale": "<2-3 sentences; CITE the specific datasheet page / board-doc '
+    'section / documented limit you retrieved>", '
+    '"proposedAction": null OR {"tool": "set_psu|probe_net|serial_send|flash_mcu|inspect_closeup", '
+    '"args": {"target":"<net>","voltage_v":<n>,...}, '
+    '"instruction": "<imperative step for the operator>", "risk": "LOW|MEDIUM|HIGH"}}. '
+    "Use proposedAction only when a concrete operator step is warranted; else null. "
+    "Do NOT invent any voltage/current setpoint — only cite values you obtained "
+    "from get_documented_limit."
+)
+
+
+def _summon_via_sandbox(
+    sme_id: str, summon: SummonGuild, system: str, brief: str,
+    knowledge: KnowledgeAdapter | None = None,
+    on_tool_call: "Callable[[dict], None] | None" = None,
+) -> dict:
+    """Run ONE SME turn as a real, TOOL-CAPABLE per-SME managed agent (HYBRID) and
+    return the parsed final SmeResponse dict.
+
+    1. GATHER — _gather_grounding_via_tools runs a bounded model-based
+       interactions.create() tool-loop that pulls cited grounding via the custom
+       knowledge tools (+ run_analysis), executed against the per-session
+       KnowledgeAdapter and streamed via on_tool_call. (Custom function tools are
+       allowed on a model interaction but NOT on the managed agent — see header.)
+    2. REASON — the retrieved, cited grounding is folded into an enriched briefing
+       fed to the SME's OWN warm Antigravity managed agent (agent=ANTIGRAVITY_AGENT,
+       environment=<warm per-SME env>, persona as system_instruction) for the final
+       SmeResponse JSON. The agent can also do native code-exec math here.
+
+    The orchestrator still attaches the documented-limit citation to any proposed
+    step (never the model). Raises on failure → real_summon_one falls back to the
+    Flash loop, then the stub (never-fail-stop, 01 §7). The per-SME environment is
+    reused across turns (warm)."""
+    env = _get_sme_env(sme_id)
+    if env is None:
+        raise RuntimeError(f"per-SME sandbox unavailable for {sme_id}")
+
+    client = _genai()
+    siblings = [s for s in summon.smes if s != sme_id]
+    knowledge_for_call = knowledge or KnowledgeAdapter()
+
+    # surface the per-SME managed-agent turn opening (streaming-sink contract).
+    if on_tool_call is not None:
+        try:
+            on_tool_call({"name": "managed_agent", "args": {"sme": sme_id}, "result": None})
+        except Exception as e:  # noqa: BLE001 — a bad sink must not fail-stop
+            log.warning("on_tool_call (managed_agent) sink raised (%s); continuing", e)
+
+    # 1) GATHER cited grounding via the custom-tool loop (model interaction).
+    grounding, tool_calls = _gather_grounding_via_tools(
+        sme_id, system, brief, siblings, knowledge_for_call, on_tool_call)
+
+    # 2) REASON in the SME's warm managed-agent sandbox on the enriched briefing.
     final = client.interactions.create(
         agent=ANTIGRAVITY_AGENT,
-        input=_SANDBOX_FINAL_INSTRUCTIONS,
-        environment=env,
-        previous_interaction_id=getattr(it, "id", None),
-        response_mime_type="application/json",
+        input=_enriched_briefing(brief, grounding, tool_calls)
+        + "\n\n" + _SANDBOX_FINAL_INSTRUCTIONS,
+        system_instruction=system,
+        environment=env,  # reuse the SME's warm sandbox; NOT environment_id=
     )
     text = getattr(final, "output_text", None) or _interaction_text(final) or ""
     return _loads(text)
@@ -1298,14 +1371,17 @@ def real_summon_one(
     """Summon one SME and return its SmeResponse.
 
     DEFAULT path (`FORGE_SME_USE_SANDBOX!=0`): run the SME as a REAL, TOOL-CAPABLE
-    Antigravity managed agent — a bounded interactions.create() tool-loop in the
-    SME's warm per-SME sandbox (_summon_via_sandbox). The persona is the agent's
-    system instruction, the orchestrator-assembled `summon.briefing` (question +
-    board facts + limits + snapshot, see GraphEngine._build_briefing) is the
-    grounded starting context, and the SME PULLS more via the SAME knowledge tools
-    (+ run_analysis) the Flash loop declares — executed against the per-session
-    adapter — before concluding with forced JSON. Prewarmed + kept-warm so the
-    ~70s cold-start is off the critical path.
+    per-SME managed agent — a HYBRID (_summon_via_sandbox): a model-based
+    interactions.create() tool-loop GATHERS cited grounding via the SAME knowledge
+    tools (+ run_analysis) the Flash loop declares (executed against the
+    per-session adapter), then the SME's OWN warm Antigravity managed agent REASONS
+    on that enriched briefing to produce the final SmeResponse. (Custom function
+    tools are supported on a MODEL interaction but rejected by the managed agent —
+    see the section header.) The persona is the system instruction and the
+    orchestrator-assembled `summon.briefing` (question + board facts + limits +
+    snapshot, see GraphEngine._build_briefing) is the grounded starting context.
+    The per-SME env is prewarmed + kept-warm so the ~70s cold-start is off the
+    critical path.
 
     ESCAPE HATCH (`FORGE_SME_USE_SANDBOX=0`): the fast bounded tool-calling agent
     on gemini-3.5-flash (_run_sme_tool_loop). This is ALSO the graceful fallback
