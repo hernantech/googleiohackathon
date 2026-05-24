@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import threading
+from pathlib import Path
 from typing import Callable
 
 from orchestrator.graph.state import DissentResult, GraphDeps, RouteDecision
@@ -65,6 +66,88 @@ SME_ROLES = {
 }
 
 _client = None
+
+# ── SME persona/skill packs (smes/<id>/AGENTS.md + SKILL.md, spec 02) ────────
+#
+# When a pack exists on disk it provides the RICH persona (the AGENTS.md "Role"
+# + lane + defer-to + never-invent rule) as the SME's system instruction, with
+# the SKILL.md tool-usage contract appended (bounded). When absent, we fall back
+# to the inline SME_ROLES one-liner — so zero-config boot still works and the
+# packs are a purely additive upgrade (they ship in the image; see Dockerfile +
+# pyproject packaging). Loaded + cached ONCE, lazily, module-level.
+
+#: smeId ("@power") -> assembled persona text (None = no pack on disk).
+_sme_packs: "dict[str, str | None]" = {}
+_sme_packs_lock = threading.Lock()
+
+#: Cap on SKILL.md text folded into the persona (defensive bound on prompt size).
+SME_SKILL_MAX_CHARS = int(os.getenv("FORGE_SME_SKILL_MAX_CHARS", "2500"))
+
+
+def _smes_dir() -> Path:
+    """Resolve the repo's `smes/` directory robustly.
+
+    `FORGE_SMES_DIR` wins if set (lets the container point at the shipped packs).
+    Otherwise we walk up from this file looking for a `smes/` dir — works from a
+    source checkout AND from the installed package in the image (the packs are
+    COPYed alongside the repo root). Returns the first match, else a best-effort
+    repo-root/smes path (which simply won't exist → graceful one-liner fallback)."""
+    env = os.getenv("FORGE_SMES_DIR")
+    if env:
+        return Path(env)
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        cand = parent / "smes"
+        if cand.is_dir():
+            return cand
+    # repo root is two up from orchestrator/genai_seams.py in a checkout.
+    return here.parents[1] / "smes"
+
+
+def _build_persona(sme_id: str) -> "str | None":
+    """Assemble the system instruction for `sme_id` from its on-disk pack, or
+    None when no AGENTS.md exists. The AGENTS.md is the persona; SKILL.md (the
+    tool-usage + output contract) is appended, bounded, so the loop is grounded
+    in the SME's real specialty. Never raises — any read error → None (one-liner
+    fallback, 01 §7 never-fail-stop)."""
+    name = sme_id.lstrip("@#")
+    base = _smes_dir() / name
+    try:
+        agents = base / "AGENTS.md"
+        if not agents.is_file():
+            return None
+        persona = agents.read_text(encoding="utf-8").strip()
+        if not persona:
+            return None
+        skill = base / "SKILL.md"
+        if skill.is_file():
+            skill_text = skill.read_text(encoding="utf-8").strip()
+            if skill_text:
+                persona += (
+                    "\n\n=== Skill pack (tools + when to use them) ===\n"
+                    + skill_text[:SME_SKILL_MAX_CHARS]
+                )
+        return persona
+    except Exception as e:  # noqa: BLE001 — a bad/missing pack must not fail-stop
+        log.warning("loading SME pack for %s failed (%s); using one-liner", sme_id, e)
+        return None
+
+
+def _sme_persona(sme_id: str) -> "str | None":
+    """Return the cached assembled persona for `sme_id` (None if no pack). Loads
+    + caches once per SME, thread-safe (the guild fans out concurrently)."""
+    if sme_id in _sme_packs:
+        return _sme_packs[sme_id]
+    with _sme_packs_lock:
+        if sme_id not in _sme_packs:  # re-check after acquiring the lock
+            _sme_packs[sme_id] = _build_persona(sme_id)
+        return _sme_packs[sme_id]
+
+
+def reset_sme_packs_for_tests() -> None:
+    """Test hook: drop the cached personas so a test can re-exercise loading
+    (e.g. after pointing FORGE_SMES_DIR at a fixture). Not used in production."""
+    _sme_packs.clear()
 
 
 def _genai():
@@ -728,15 +811,30 @@ def real_summon_one(
     ourselves and the orchestrator attaches the documented-limit citation to any
     proposed step — the model never invents a setpoint (03 §3.3.6)."""
     try:
-        role = SME_ROLES.get(sme_id, "a specialist SME")
         siblings = [s for s in summon.smes if s != sme_id]
-        system = (
-            f"You are {sme_id}, {role}. You are on Forge's guild advising a HUMAN "
-            "operator at an electronics bench. Forge actuates nothing — you only "
-            "recommend steps the operator performs by hand. Be terse, ground every "
-            "claim in the board doc/datasheet (use your tools to retrieve them), and "
-            "stay strictly in your lane."
-        )
+        # Prefer the rich on-disk persona pack (smes/<id>/AGENTS.md + SKILL.md);
+        # fall back to the inline SME_ROLES one-liner when no pack ships (keeps
+        # zero-config boot working — the packs are an additive upgrade).
+        pack = _sme_persona(sme_id)
+        if pack is not None:
+            system = (
+                pack
+                + "\n\n=== Standing instructions ===\n"
+                "You are on Forge's guild advising a HUMAN operator at an "
+                "electronics workbench. Forge actuates nothing — you only "
+                "recommend steps the operator performs by hand. Be terse, ground "
+                "every claim by retrieving it with your tools, and stay strictly "
+                "in your lane."
+            )
+        else:
+            role = SME_ROLES.get(sme_id, "a specialist SME")
+            system = (
+                f"You are {sme_id}, {role}. You are on Forge's guild advising a HUMAN "
+                "operator at an electronics workbench. Forge actuates nothing — you "
+                "only recommend steps the operator performs by hand. Be terse, ground "
+                "every claim in the board doc/datasheet (use your tools to retrieve "
+                "them), and stay strictly in your lane."
+            )
         brief = summon.briefing or f"Topic: {summon.topic}"
         d, _tool_calls = _run_sme_tool_loop(system, brief, siblings, knowledge, on_tool_call)
         conf = min(max(float(d.get("confidence", 0.5)), 0.0), 1.0)

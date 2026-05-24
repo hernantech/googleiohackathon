@@ -35,6 +35,10 @@ RUN mkdir -p orchestrator && touch orchestrator/__init__.py \
 COPY orchestrator ./orchestrator
 RUN pip install --no-deps --force-reinstall .
 COPY bench_knowledge ./bench_knowledge
+# SME persona/skill packs (smes/<id>/AGENTS.md + SKILL.md). Loaded at runtime by
+# path (genai_seams._smes_dir resolves /app/smes here), like bench_knowledge/ —
+# the richer per-SME persona when present; the inline one-liner otherwise.
+COPY smes ./smes
 
 RUN useradd --create-home --uid 10001 forge
 USER forge
