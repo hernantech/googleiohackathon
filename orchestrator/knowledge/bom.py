@@ -24,6 +24,7 @@ Loading is lazy and the parsed index is cached on first call.
 
 from __future__ import annotations
 
+import os
 import pathlib
 import re
 from functools import lru_cache
@@ -70,30 +71,70 @@ class BomResult(BaseModel):
 
 # ── BOM data path ────────────────────────────────────────────────────────────
 
-_BOM_YAML_PATH = (
-    pathlib.Path(__file__).resolve().parents[2]
-    / "bench_knowledge"
-    / "bq79616-bringup-bom.yaml"
-)
+_BENCH_KNOWLEDGE_DIR = pathlib.Path(__file__).resolve().parents[2] / "bench_knowledge"
+
+#: Default (bundled demo): the bq79616 bring-up AMB BOM.
+_BOM_YAML_PATH = _BENCH_KNOWLEDGE_DIR / "bq79616-bringup-bom.yaml"
+
+#: FORGE_BOARD shortcut → BOM YAML. The 25E precharge BOM carries REAL
+#: designators (joined from the .SchDoc on DesignItemId), unlike the bq79616
+#: BOM whose designators are inferred. BOM_FILE env overrides everything.
+_NAMED_BOM_FILES: dict[str, pathlib.Path] = {
+    "25e": _BENCH_KNOWLEDGE_DIR / "25e-precharge-2026-05-bom.yaml",
+    "25e-precharge": _BENCH_KNOWLEDGE_DIR / "25e-precharge-2026-05-bom.yaml",
+    "bq79616": _BOM_YAML_PATH,
+}
 
 _TOP_CITE = (
     "AMB BOM — bench_knowledge/bq79616-bringup-bom.yaml "
     "(source: BOM_[No Variations] (4).csv)"
 )
 
+_TOP_CITE_25E = (
+    "25E precharge BOM — bench_knowledge/25e-precharge-2026-05-bom.yaml "
+    "(source: 25E_Precharge_Board_v2 .BomDoc + .SchDoc, real designators)"
+)
+
+
+def _active_bom_path() -> pathlib.Path:
+    """Resolve the active BOM YAML: BOM_FILE env > FORGE_BOARD shortcut > default.
+
+    Default is the bundled bq79616 demo BOM, so the demo is unaffected.
+    """
+    override = (os.environ.get("BOM_FILE") or "").strip()
+    if override:
+        return pathlib.Path(override)
+    name = (os.environ.get("FORGE_BOARD") or "").strip().casefold()
+    if name in _NAMED_BOM_FILES:
+        return _NAMED_BOM_FILES[name]
+    return _BOM_YAML_PATH
+
+
+def _active_top_cite(path: pathlib.Path) -> str:
+    """Top-level cite string for the active BOM file."""
+    if path.name.startswith("25e-precharge"):
+        return _TOP_CITE_25E
+    return _TOP_CITE
+
 
 # ── lazy-loaded + cached item index ─────────────────────────────────────────
 
-@lru_cache(maxsize=1)
-def _load_items() -> list[dict[str, Any]]:
-    """Parse the YAML and return a flat list of item dicts. Cached forever."""
-    if not _BOM_YAML_PATH.exists():
+@lru_cache(maxsize=8)
+def _load_items_at(path_str: str) -> list[dict[str, Any]]:
+    """Parse a BOM YAML at ``path_str`` → flat item list. Cached per path."""
+    path = pathlib.Path(path_str)
+    if not path.exists():
         return []
-    with _BOM_YAML_PATH.open(encoding="utf-8") as fh:
+    with path.open(encoding="utf-8") as fh:
         data = yaml.safe_load(fh)
     bom = data.get("bom", {})
     items: list[dict] = bom.get("items", [])
     return items
+
+
+def _load_items() -> list[dict[str, Any]]:
+    """Parse the active BOM YAML (FORGE_BOARD / BOM_FILE aware). Cached per path."""
+    return _load_items_at(str(_active_bom_path()))
 
 
 # ── designator pattern ───────────────────────────────────────────────────────
@@ -196,7 +237,7 @@ def _score_item(item: dict, tokens: list[str], raw_query: str) -> float:
     return score
 
 
-def _item_to_match(item: dict, score: float) -> BomMatch:
+def _item_to_match(item: dict, score: float, board_label: str = "AMB BOM") -> BomMatch:
     """Convert a raw YAML dict to a BomMatch pydantic model."""
     des = item.get("designator", "?")
     bom_line = item.get("bom_line")
@@ -206,7 +247,8 @@ def _item_to_match(item: dict, score: float) -> BomMatch:
     pkg = item.get("package") or None
 
     # Build a human-citable reference
-    cite_parts = [f"AMB BOM {des}"]
+    des_label = des or "(no des)"
+    cite_parts = [f"{board_label} {des_label}"]
     if mpn:
         cite_parts.append(f"MPN {mpn}")
     if val:
@@ -254,16 +296,19 @@ def lookup_bom(query: str, max_results: int = 10) -> BomResult:
     Returns matches ranked by relevance. Empty / whitespace query → empty result
     (never crashes).
     """
+    active_path = _active_bom_path()
+    top_cite = _active_top_cite(active_path)
+
     q = (query or "").strip()
     if not q:
-        return BomResult(query=query, matches=[], cite=_TOP_CITE)
+        return BomResult(query=query, matches=[], cite=top_cite)
 
     items = _load_items()
     if not items:
         return BomResult(
             query=query,
             matches=[],
-            cite=_TOP_CITE,
+            cite=top_cite,
             note=(
                 "BOM YAML not found at expected path. "
                 "Run from repo root or check bench_knowledge/ directory."
@@ -286,6 +331,6 @@ def lookup_bom(query: str, max_results: int = 10) -> BomResult:
     # Cap results
     top = scored[:max_results]
 
-    matches = [_item_to_match(item, score) for score, item in top]
-    cite = _TOP_CITE
-    return BomResult(query=query, matches=matches, cite=cite)
+    board_label = "25E BOM" if active_path.name.startswith("25e-precharge") else "AMB BOM"
+    matches = [_item_to_match(item, score, board_label) for score, item in top]
+    return BomResult(query=query, matches=matches, cite=top_cite)

@@ -15,6 +15,7 @@ human performs; there is deliberately no callable behind any of them here
 
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 
@@ -28,22 +29,69 @@ from orchestrator.knowledge.lookups import (
     lookup_datasheet as _lookup_datasheet,
 )
 
+_BENCH_KNOWLEDGE_DIR = pathlib.Path(__file__).resolve().parents[2] / "bench_knowledge"
+
 #: Bundled demo profile (§6). Default when no path / env is given and it exists.
 EXAMPLE_PROFILE_PATH = (
-    pathlib.Path(__file__).resolve().parents[2]
-    / "bench_knowledge"
-    / "examples"
-    / "bq79616-bringup-2026-05.yaml"
+    _BENCH_KNOWLEDGE_DIR / "examples" / "bq79616-bringup-2026-05.yaml"
 )
+
+#: REAL 25E precharge board, seeded from the Altium 25E_AMB_Rev2 project
+#: (bench_knowledge/seed_25e.py). Selectable via FORGE_BOARD=25e, which loads the
+#: profile YAML AND auto-ingests the SchematicJSON (real designators + nets).
+BOARD_25E_PROFILE_PATH = _BENCH_KNOWLEDGE_DIR / "25e-precharge-2026-05.yaml"
+BOARD_25E_SCHEMATIC_PATH = _BENCH_KNOWLEDGE_DIR / "25e-precharge-2026-05-schematic.json"
+
+#: Named board shortcuts for FORGE_BOARD. Each maps to (profile_path,
+#: schematic_json_path | None). FORGE_BOARD is a convenience over BOARD_PROFILE;
+#: an explicit profile_path arg or BOARD_PROFILE still wins (see _default_…).
+_NAMED_BOARDS: dict[str, tuple[pathlib.Path, pathlib.Path | None]] = {
+    "25e": (BOARD_25E_PROFILE_PATH, BOARD_25E_SCHEMATIC_PATH),
+    "25e-precharge": (BOARD_25E_PROFILE_PATH, BOARD_25E_SCHEMATIC_PATH),
+    "bq79616": (EXAMPLE_PROFILE_PATH, None),
+}
+
+
+def _named_board() -> tuple[pathlib.Path, pathlib.Path | None] | None:
+    """Resolve the FORGE_BOARD env shortcut to (profile, schematic) paths.
+
+    Returns None when FORGE_BOARD is unset / unknown so the caller falls back to
+    BOARD_PROFILE / the bundled demo. Never raises.
+    """
+    name = (os.environ.get("FORGE_BOARD") or "").strip().casefold()
+    if not name:
+        return None
+    return _NAMED_BOARDS.get(name)
 
 
 def _default_profile_path() -> str | os.PathLike | None:
-    """BOARD_PROFILE env > bundled demo fixture (if present) > None (empty)."""
+    """BOARD_PROFILE env > FORGE_BOARD shortcut > bundled demo fixture > None.
+
+    BOARD_PROFILE keeps priority so an explicit YAML path always wins. A
+    FORGE_BOARD shortcut (e.g. ``25e``) selects a bundled real board profile.
+    """
     if os.environ.get("BOARD_PROFILE"):
         return None  # let load_board_profile read the env var itself
+    named = _named_board()
+    if named is not None and named[0].exists():
+        return named[0]
     if EXAMPLE_PROFILE_PATH.exists():
         return EXAMPLE_PROFILE_PATH
     return None
+
+
+def _load_schematic_json(path: str | os.PathLike) -> "object | None":
+    """Load a seeded ``SchematicJSON`` from a JSON file, or None on any error.
+
+    Imported lazily to avoid a knowledge<->schematic import cycle. Never raises.
+    """
+    try:
+        from orchestrator.schematic.schema import SchematicJSON
+
+        raw = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+        return SchematicJSON.model_validate(raw)
+    except Exception:  # noqa: BLE001 — degrade gracefully (01 §7)
+        return None
 
 
 class KnowledgeAdapter:
@@ -55,6 +103,7 @@ class KnowledgeAdapter:
     """
 
     def __init__(self, profile_path: str | os.PathLike | None = None):
+        explicit = profile_path is not None
         if profile_path is None:
             profile_path = _default_profile_path()
         self.board_profile: BoardProfile = load_board_profile(profile_path)
@@ -64,6 +113,18 @@ class KnowledgeAdapter:
         #: by ref/net/part without re-running vision. Typed loosely to avoid an
         #: import cycle (schematic depends only on knowledge, not vice-versa).
         self.schematic: "object | None" = None
+
+        # FORGE_BOARD shortcut may bundle a seeded SchematicJSON (real
+        # designators + nets) alongside the profile. Auto-ingest it so
+        # lookup_schematic / lookup_board_doc answer about the real board with
+        # zero caller change. Skipped when a profile_path was passed explicitly
+        # or BOARD_PROFILE overrides (the caller is steering, not FORGE_BOARD).
+        if not explicit and not os.environ.get("BOARD_PROFILE"):
+            named = _named_board()
+            if named is not None and named[1] is not None and named[1].exists():
+                sch = _load_schematic_json(named[1])
+                if sch is not None:
+                    self.ingest_schematic(sch)
 
     # ── §3.1 ──
     def lookup_datasheet(
@@ -176,4 +237,6 @@ __all__ = [
     "BoardDocResult",
     "BomResult",
     "EXAMPLE_PROFILE_PATH",
+    "BOARD_25E_PROFILE_PATH",
+    "BOARD_25E_SCHEMATIC_PATH",
 ]
