@@ -284,12 +284,20 @@ def _parse_headline(text: str) -> str:
     return " ".join(text.split())
 
 
-def headline_for(facts: dict[str, Any], model_call: Optional[ModelCall]) -> tuple[str, str]:
-    """Return ``(headline, source)``. ``source`` ∈ {'gemini','heuristic'}.
+def headline_for(
+    facts: dict[str, Any],
+    model_call: Optional[ModelCall],
+    *,
+    model_source: str = "gemini",
+) -> tuple[str, str]:
+    """Return ``(headline, source)``. ``source`` ∈ {'managed','gemini','heuristic'}.
 
     ``model_call`` maps a prompt → the raw model text (JSON per the prompt).
-    ``None`` (or any error) falls back to the deterministic heuristic — the
-    dashboard never goes blank.
+    ``model_source`` is the provenance label recorded when ``model_call``
+    succeeds — ``'managed'`` for the Antigravity managed-agent distiller,
+    ``'gemini'`` for a plain model call. ``None`` (or any error) falls back to
+    the deterministic heuristic — the dashboard never goes blank, and the
+    ``source`` it shows stays honest about how the headline was produced.
     """
     if model_call is None or not facts.get("event_count"):
         return heuristic_headline(facts), "heuristic"
@@ -297,7 +305,7 @@ def headline_for(facts: dict[str, Any], model_call: Optional[ModelCall]) -> tupl
         headline = _parse_headline(model_call(build_prompt(facts)))
         if not headline:
             raise ValueError("empty headline")
-        return headline, "gemini"
+        return headline, model_source
     except Exception:  # noqa: BLE001
         log.exception("distill: model_call failed; using heuristic")
         return heuristic_headline(facts), "heuristic"
@@ -306,9 +314,10 @@ def headline_for(facts: dict[str, Any], model_call: Optional[ModelCall]) -> tupl
 def gemini_model_call(api_key: str, model: str) -> ModelCall:
     """Build a ModelCall backed by google-genai — mirrors orchestrator
     genai_seams._flash_json: lazy ``genai.Client()`` (reads GEMINI_API_KEY from
-    env automatically), a plain ``generate_content`` constrained to JSON. NOT
-    the Antigravity sandbox — distillation is fast text summarization, so a
-    plain gemini-3.5-flash call is the right tool. Imported lazily so tests
+    env automatically), a plain ``generate_content`` constrained to JSON. This
+    is the *plain-model* distiller; for the **managed-agent** distiller (the
+    Antigravity Interactions API — same key, same prompt, routed through a real
+    managed agent) see ``managed_agent_model_call``. Imported lazily so tests
     never touch the network or the optional dep.
 
     ``api_key`` is accepted for explicitness/testability; an empty string lets
@@ -328,16 +337,69 @@ def gemini_model_call(api_key: str, model: str) -> ModelCall:
     return _call
 
 
+def _interaction_text(it: object) -> str:
+    """Concatenate the text of every step in a managed-agent interaction.
+    Mirrors orchestrator.genai_seams._interaction_text — the observer is
+    intentionally decoupled, so we keep a tiny local copy rather than import."""
+    parts: list[str] = []
+    for step in getattr(it, "steps", None) or []:
+        for c in getattr(step, "content", None) or []:
+            t = getattr(c, "text", None)
+            if t:
+                parts.append(t)
+    return "\n".join(parts)
+
+
+def managed_agent_model_call(
+    api_key: str, agent: str = "antigravity-preview-05-2026"
+) -> ModelCall:
+    """Build a ModelCall backed by a real **Antigravity managed agent** (the
+    Gemini Interactions API), not a plain ``generate_content``. This is what
+    makes the management layer genuinely use a managed agent: each cycle we hand
+    the session-facts prompt to the agent and read back its one-line JSON
+    headline.
+
+    ONE warm environment is reused across cycles — created on the first call,
+    its ``environment_id`` cached — so only the first distill pays the sandbox
+    cold-start (the heuristic fallback covers that first cycle). The same
+    GEMINI_API_KEY authenticates it; no separate key. Imported lazily so tests
+    never touch the network or the optional dep.
+
+    Returns a ``ModelCall`` (prompt → raw JSON text) so it drops straight into
+    ``headline_for``/``distill_once`` exactly where ``gemini_model_call`` did."""
+    from google import genai  # optional dep
+
+    client = genai.Client(api_key=api_key) if api_key else genai.Client()
+    state: dict[str, Optional[str]] = {"env": None}  # warm environment_id
+
+    def _call(prompt: str) -> str:
+        it = client.interactions.create(
+            agent=agent,
+            input=prompt,
+            environment=state["env"] or "remote",  # reuse warm env; else provision
+        )
+        env = getattr(it, "environment_id", None)
+        if env:
+            state["env"] = env
+        return getattr(it, "output_text", None) or _interaction_text(it) or ""
+
+    return _call
+
+
 def distill_once(
     store: Store,
     *,
     window_s: float,
     max_events: int,
     model_call: Optional[ModelCall],
+    model_source: str = "gemini",
     now: Optional[int] = None,
 ) -> int:
     """Run one distill cycle across all sessions seen in the window. Writes a
     status row per session. Returns the number of status rows written.
+
+    ``model_source`` is the provenance label stored when ``model_call`` succeeds
+    ('managed' for the Antigravity managed agent, 'gemini' for a plain model).
 
     This is the seam the test drives: insert events, run ``distill_once`` with a
     stub ``model_call``, assert a status row appears.
@@ -351,7 +413,7 @@ def distill_once(
         if not events:
             continue
         facts = compute_facts(events, session_id=sid, now=now)
-        headline, source = headline_for(facts, model_call)
+        headline, source = headline_for(facts, model_call, model_source=model_source)
         store.upsert_status(sid, headline, facts, source)
         written += 1
     return written

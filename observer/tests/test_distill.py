@@ -153,3 +153,65 @@ def test_distill_once_heuristic_when_no_model():
     written = distill_once(store, window_s=3600, max_events=200, model_call=None)
     assert written == 1
     assert store.all_status()[0]["source"] == "heuristic"
+
+
+# ── managed-agent distiller (Antigravity Interactions API) ───────────────────
+
+def test_headline_for_records_managed_source():
+    """A successful call labelled model_source='managed' is recorded as such, so
+    the dashboard honestly shows the headline came from a managed agent."""
+    facts = {"event_count": 2}
+    headline, source = headline_for(
+        facts, lambda p: '{"headline": "X"}', model_source="managed"
+    )
+    assert source == "managed" and headline == "X"
+
+
+def test_distill_once_records_managed_source():
+    store = Store(":memory:")
+    _seed(store, S.scenario())
+    written = distill_once(
+        store, window_s=3600, max_events=200,
+        model_call=lambda p: '{"headline": "M"}', model_source="managed",
+    )
+    assert written == 1
+    assert store.all_status()[0]["source"] == "managed"
+
+
+def test_managed_agent_model_call_reuses_warm_env(monkeypatch):
+    """managed_agent_model_call routes through interactions.create, provisions a
+    remote env on the FIRST call, and REUSES the returned environment_id on every
+    later call (warm — only the first pays the cold-start). Network is stubbed."""
+    import sys
+    import types as T
+    from observer.distill import managed_agent_model_call
+
+    calls: list[dict] = []
+
+    class _Inter:
+        def create(self, **kw):
+            calls.append(kw)
+            return T.SimpleNamespace(
+                output_text='{"headline": "MANAGED HEADLINE"}',
+                environment_id="env-1",
+            )
+
+    class _Client:
+        def __init__(self, *a, **k):
+            self.interactions = _Inter()
+
+    fake_genai = T.SimpleNamespace(Client=_Client)
+    fake_google = T.ModuleType("google")
+    fake_google.genai = fake_genai  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "google", fake_google)
+    monkeypatch.setitem(sys.modules, "google.genai", fake_genai)
+
+    call = managed_agent_model_call("test-key", "antigravity-preview-05-2026")
+    out1 = call("PROMPT-1")
+    out2 = call("PROMPT-2")
+
+    assert out1 == out2 == '{"headline": "MANAGED HEADLINE"}'
+    assert calls[0]["agent"] == "antigravity-preview-05-2026"
+    assert calls[0]["input"] == "PROMPT-1"
+    assert calls[0]["environment"] == "remote"   # first call provisions
+    assert calls[1]["environment"] == "env-1"     # second reuses the warm env
