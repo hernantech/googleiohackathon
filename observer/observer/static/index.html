@@ -83,25 +83,95 @@
   .tl .who2 { color:var(--accent); }
   .empty { color:var(--muted); padding:40px; text-align:center; }
   .footnote { color:var(--muted); font-size:11px; margin-top:24px; text-align:center; }
+
+  /* tabs */
+  .tabs { display:flex; gap:4px; margin-left:20px; }
+  .tab { background:none; border:1px solid transparent; color:var(--muted); cursor:pointer;
+         font:inherit; font-size:13px; padding:6px 12px; border-radius:7px; }
+  .tab:hover { color:var(--text); }
+  .tab.active { color:var(--text); background:var(--panel2); border-color:var(--line); }
+  .view { display:none; }
+  .view.active { display:block; }
+
+  /* drill-down full session history (and raw JSON) */
+  .raw { background:#0b0e14; border:1px solid var(--line); border-radius:6px; padding:8px 10px;
+         font:11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace; color:#c9d1d9;
+         white-space:pre-wrap; word-break:break-word; margin:6px 0 0; max-height:340px; overflow:auto; }
+  .tl li.expandable { cursor:pointer; }
+  .tl li .toggle { color:var(--muted); font-size:10px; margin-left:6px; }
+  .seg { display:flex; gap:6px; margin:14px 0 4px; }
+  .seg button { background:var(--panel2); border:1px solid var(--line); color:var(--muted);
+                cursor:pointer; font:inherit; font-size:12px; padding:4px 10px; border-radius:6px; }
+  .seg button.active { color:var(--text); border-color:var(--accent); }
+  #drawer .more { display:block; width:100%; margin-top:12px; background:var(--panel2);
+                  border:1px solid var(--line); color:var(--text); cursor:pointer; padding:8px;
+                  border-radius:6px; font:inherit; }
+
+  /* All-events firehose view */
+  .filters { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:14px; }
+  .filters input, .filters select { background:var(--panel2); border:1px solid var(--line);
+        color:var(--text); border-radius:6px; padding:6px 9px; font:inherit; font-size:13px; }
+  .filters input[type=text] { min-width:240px; }
+  .filters .clear { background:none; border:1px solid var(--line); color:var(--muted); cursor:pointer;
+        border-radius:6px; padding:6px 10px; }
+  .kindbar { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; }
+  .kc { font-size:11px; color:var(--muted); border:1px solid var(--line); border-radius:20px; padding:2px 9px; }
+  .kc b { color:var(--text); }
+  table.fh { width:100%; border-collapse:collapse; font-size:12.5px; }
+  table.fh th { text-align:left; color:var(--muted); font-weight:600; padding:6px 10px;
+        border-bottom:1px solid var(--line); position:sticky; top:53px; background:var(--bg); }
+  table.fh td { padding:6px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  table.fh tr.ev { cursor:pointer; }
+  table.fh tr.ev:hover { background:var(--panel2); }
+  table.fh .kindcell { font-weight:600; }
+  table.fh .when { color:var(--muted); white-space:nowrap; }
+  table.fh .sid { color:var(--accent); }
+  table.fh .auth { color:var(--pending); }
+  table.fh tr.detail td { background:#0b0e14; }
 </style>
 </head>
 <body>
 <header>
   <h1>🔧 Forge Observer</h1>
   <span id="conn"><span class="dot"></span>connecting…</span>
+  <div class="tabs">
+    <button class="tab active" id="tab-ops" onclick="showView('ops')">Operators</button>
+    <button class="tab" id="tab-events" onclick="showView('events')">All events</button>
+  </div>
   <div class="totals">
-    <span><b id="t-ops">0</b> operators</span>
+    <span><b id="t-online">0</b> online / <b id="t-ops">0</b></span>
     <span><b id="t-flag">0</b> flagged</span>
     <span><b id="t-ev">0</b> events</span>
     <span id="t-clock"></span>
   </div>
 </header>
 <main>
-  <div class="alert-bar" id="alerts"></div>
-  <div class="grid" id="grid"><div class="empty">No active operators yet.</div></div>
-  <div class="footnote">
-    Polls every 4s · headlines distilled by Gemini (3.5-flash) or heuristic fallback ·
-    read-only view of the orchestrator chat bus
+  <!-- VIEW: operators (the at-a-glance manager grid) -->
+  <div class="view active" id="view-ops">
+    <div class="alert-bar" id="alerts"></div>
+    <div class="grid" id="grid"><div class="empty">No operators yet.</div></div>
+    <div class="footnote">
+      Polls every 4s · headlines distilled by Gemini (3.5-flash) or heuristic fallback ·
+      read-only view of the orchestrator chat bus · offline operators are kept &amp; greyed, never dropped
+    </div>
+  </div>
+
+  <!-- VIEW: all events (complete, filterable, paginated firehose) -->
+  <div class="view" id="view-events">
+    <div class="filters">
+      <input type="text" id="f-q" placeholder="search summary / author / raw…" oninput="debouncedReload()">
+      <select id="f-kind" onchange="reloadEvents()"><option value="">all kinds</option></select>
+      <input type="text" id="f-sid" placeholder="session id" oninput="debouncedReload()">
+      <button class="clear" onclick="clearFilters()">clear</button>
+      <span class="when" id="f-count"></span>
+    </div>
+    <div class="kindbar" id="kindbar"></div>
+    <table class="fh">
+      <thead><tr><th>when</th><th>kind</th><th>session</th><th>author</th><th>summary</th></tr></thead>
+      <tbody id="fh-body"></tbody>
+    </table>
+    <button class="more" id="fh-more" onclick="loadMoreEvents()" style="display:none">load older events</button>
+    <div class="footnote">Every persisted event since the start of the DB · click a row for raw JSON · noise (audio, ping/pong, reconnect replay envelopes) is never persisted</div>
   </div>
 </main>
 
@@ -109,7 +179,12 @@
   <span class="close" onclick="closeDrawer()">×</span>
   <h2 id="d-title"></h2>
   <div id="d-sub" class="task"></div>
+  <div class="seg" id="d-seg">
+    <button class="active" id="seg-tl" onclick="setDrawerMode('timeline')">Timeline</button>
+    <button id="seg-full" onclick="setDrawerMode('full')">Full history</button>
+  </div>
   <ul class="tl" id="d-tl"></ul>
+  <button class="more" id="d-more" onclick="loadMoreSession()" style="display:none">load older events</button>
 </div>
 
 <script>
@@ -144,6 +219,7 @@ function setConn(ok){
 }
 
 function render(d){
+  document.getElementById("t-online").textContent = (d.totals.online!=null)?d.totals.online:d.totals.operators;
   document.getElementById("t-ops").textContent = d.totals.operators;
   document.getElementById("t-flag").textContent = d.totals.flagged;
   document.getElementById("t-ev").textContent = d.totals.events;
@@ -164,11 +240,12 @@ function render(d){
   document.getElementById("alerts").innerHTML = alerts.join("");
 
   const grid = document.getElementById("grid");
-  if(!d.operators.length){ grid.innerHTML='<div class="empty">No active operators yet.</div>'; return; }
+  if(!d.operators.length){ grid.innerHTML='<div class="empty">No operators yet.</div>'; return; }
   grid.innerHTML = d.operators.map(card).join("");
 }
 
 function card(o){
+  const online = (o.online!=null)? o.online : o.active;  // back-compat
   const flagged = (o.flags||[]).some(f=>f==="safety_halt"||f==="stuck_confirmation");
   const flags = (o.flags||[]).map(f=>`<span class="flag ${f}">${FLAG_LABEL[f]||f}</span>`).join("");
   const smes = (o.smes_consulted||[]).map(s=>{
@@ -181,10 +258,10 @@ function card(o){
       — <span class="age">${fmtAge(p.pending_ms)}</span>${p.risk?` · ${esc(p.risk)}`:""}</div>`;
   }).join("");
   const src = o.headline_source||"";
-  return `<div class="card ${flagged?'flagged':''} ${o.active?'':'idle'}" onclick="openDrawer('${esc(o.session_id)}')">
+  return `<div class="card ${flagged?'flagged':''} ${online?'':'idle'}" onclick="openDrawer('${esc(o.session_id)}')">
     <div class="card-top">
-      <span class="who">${o.active?'🟢':'⚪'} ${esc(o.session_id)}</span>
-      <span class="since ${o.active?'live':'offline'}">${o.active?'active':'idle'} ${fmtAge(o.active?o.active_for_ms:o.idle_ms)}</span>
+      <span class="who">${online?'🟢':'⚪'} ${esc(o.session_id)}</span>
+      <span class="since ${online?'live':'offline'}">${online?'active '+fmtAge(o.active_for_ms):'offline '+fmtAge(o.idle_ms)}</span>
     </div>
     <div class="headline">${esc(o.headline)}<span class="src ${src}">${src}</span></div>
     ${o.board_task?`<div class="task">Task: <b>${esc(o.board_task)}</b> · ${o.event_count} events</div>`:""}
@@ -194,20 +271,155 @@ function card(o){
   </div>`;
 }
 
+// ── view switching ──────────────────────────────────────────────────────────
+let currentView = "ops";
+function showView(v){
+  currentView = v;
+  document.getElementById("view-ops").classList.toggle("active", v==="ops");
+  document.getElementById("view-events").classList.toggle("active", v==="events");
+  document.getElementById("tab-ops").classList.toggle("active", v==="ops");
+  document.getElementById("tab-events").classList.toggle("active", v==="events");
+  if(v==="events"){ loadKinds(); reloadEvents(); }
+}
+
+// ── All-events firehose view ──────────────────────────────────────────────────
+let fhNextBefore = null, fhLoading = false;
+let dbT = null;
+function debouncedReload(){ clearTimeout(dbT); dbT = setTimeout(reloadEvents, 300); }
+function clearFilters(){
+  document.getElementById("f-q").value="";
+  document.getElementById("f-kind").value="";
+  document.getElementById("f-sid").value="";
+  reloadEvents();
+}
+function eventsQuery(beforeId){
+  const q = document.getElementById("f-q").value.trim();
+  const kind = document.getElementById("f-kind").value;
+  const sid = document.getElementById("f-sid").value.trim();
+  const p = new URLSearchParams({limit:"100"});
+  if(q) p.set("q", q);
+  if(kind) p.set("kind", kind);
+  if(sid) p.set("session_id", sid);
+  if(beforeId!=null) p.set("before_id", beforeId);
+  return "/api/events?"+p.toString();
+}
+async function reloadEvents(){
+  document.getElementById("fh-body").innerHTML = "";
+  fhNextBefore = null;
+  await loadMoreEvents(true);
+}
+async function loadMoreEvents(reset){
+  if(fhLoading) return; fhLoading = true;
+  try{
+    const r = await fetch(eventsQuery(reset?null:fhNextBefore));
+    const d = await r.json();
+    const body = document.getElementById("fh-body");
+    if(reset && !d.events.length){ body.innerHTML = '<tr><td colspan="5" class="empty">No matching events.</td></tr>'; }
+    body.insertAdjacentHTML("beforeend", d.events.map(evRow).join(""));
+    fhNextBefore = d.next_before_id;
+    const more = document.getElementById("fh-more");
+    more.style.display = (d.events.length>=100 && fhNextBefore!=null) ? "block" : "none";
+    document.getElementById("f-count").textContent =
+      body.querySelectorAll("tr.ev").length + " shown";
+  }catch(e){} finally{ fhLoading = false; }
+}
+function evRow(e){
+  const when = new Date(e.received_ms).toLocaleTimeString();
+  return `<tr class="ev" onclick="toggleRaw(this, ${e.id})">
+      <td class="when">${esc(when)}</td>
+      <td class="kindcell">${esc(e.kind)}</td>
+      <td class="sid">${esc(e.session_id||"—")}</td>
+      <td class="auth">${esc(e.author_id||"")}</td>
+      <td>${esc(e.summary||"")}</td>
+    </tr>
+    <tr class="detail" id="raw-${e.id}" style="display:none"><td colspan="5">
+      <pre class="raw">${esc(JSON.stringify(e.raw, null, 2))}</pre>
+    </td></tr>`;
+}
+function toggleRaw(tr, id){
+  const d = document.getElementById("raw-"+id);
+  if(d) d.style.display = (d.style.display==="none") ? "table-row" : "none";
+}
+async function loadKinds(){
+  try{
+    const r = await fetch("/api/kinds"); const d = await r.json();
+    const sel = document.getElementById("f-kind");
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">all kinds</option>' +
+      (d.kinds||[]).map(k=>`<option value="${esc(k)}">${esc(k)}</option>`).join("");
+    sel.value = cur;
+    document.getElementById("kindbar").innerHTML =
+      Object.entries(d.counts||{}).map(([k,c])=>`<span class="kc">${esc(k)} <b>${c}</b></span>`).join("");
+  }catch(e){}
+}
+
+let drawerSid = null, drawerMode = "timeline", drawerFacts = null;
+let sessNextBefore = null, sessLoading = false;
+
 async function openDrawer(sid){
+  drawerSid = sid; drawerMode = "timeline";
   document.getElementById("drawer").classList.add("open");
   document.getElementById("d-title").textContent = sid;
   document.getElementById("d-sub").textContent = "loading…";
   document.getElementById("d-tl").innerHTML = "";
+  document.getElementById("d-more").style.display = "none";
+  setSegActive("timeline");
   try{
     const r = await fetch("/api/session/"+encodeURIComponent(sid)); const d = await r.json();
-    const f = d.facts;
+    drawerFacts = d.facts; const f = d.facts;
     document.getElementById("d-sub").innerHTML =
-      `Task: <b>${esc(f.board_task||'(unknown)')}</b> · active ${fmtAge(f.active_for_ms)} · ${f.event_count} events`;
-    document.getElementById("d-tl").innerHTML = (f.timeline||[]).slice().reverse().map(t=>
-      `<li><div class="k">${esc(t.kind)} ${t.author?`· <span class="who2">${esc(t.author)}</span>`:""}</div>
-       <div class="s">${esc(t.summary||"")}</div></li>`).join("") || '<li class="empty">No steps yet.</li>';
+      `Task: <b>${esc(f.board_task||'(unknown)')}</b> · active ${fmtAge(f.active_for_ms)} · ${f.event_count} in window · <b>${d.total_events||0}</b> total`;
+    renderTimeline();
   }catch(e){ document.getElementById("d-sub").textContent = "failed to load"; }
+}
+
+function setSegActive(mode){
+  document.getElementById("seg-tl").classList.toggle("active", mode==="timeline");
+  document.getElementById("seg-full").classList.toggle("active", mode==="full");
+}
+function setDrawerMode(mode){
+  if(mode===drawerMode) return;
+  drawerMode = mode; setSegActive(mode);
+  if(mode==="timeline"){ document.getElementById("d-more").style.display="none"; renderTimeline(); }
+  else loadSessionFull(true);
+}
+
+function renderTimeline(){
+  const f = drawerFacts || {};
+  document.getElementById("d-tl").innerHTML = (f.timeline||[]).slice().reverse().map(t=>
+    `<li><div class="k">${esc(t.kind)} ${t.author?`· <span class="who2">${esc(t.author)}</span>`:""}</div>
+     <div class="s">${esc(t.summary||"")}</div></li>`).join() || '<li class="empty">No steps yet.</li>';
+}
+
+async function loadSessionFull(reset){
+  if(reset){ document.getElementById("d-tl").innerHTML = ""; sessNextBefore = null; }
+  if(sessLoading) return; sessLoading = true;
+  try{
+    const p = new URLSearchParams({full:"true", limit:"200"});
+    if(!reset && sessNextBefore!=null) p.set("before_id", sessNextBefore);
+    const r = await fetch("/api/session/"+encodeURIComponent(drawerSid)+"?"+p.toString());
+    const d = await r.json();
+    const tl = document.getElementById("d-tl");
+    if(reset && !(d.events||[]).length) tl.innerHTML = '<li class="empty">No events.</li>';
+    tl.insertAdjacentHTML("beforeend", (d.events||[]).map(fullRow).join(""));
+    sessNextBefore = d.next_before_id;
+    document.getElementById("d-more").style.display =
+      ((d.events||[]).length>=200 && sessNextBefore!=null) ? "block" : "none";
+  }catch(e){} finally{ sessLoading = false; }
+}
+function loadMoreSession(){ loadSessionFull(false); }
+function fullRow(e){
+  const when = new Date(e.received_ms).toLocaleTimeString();
+  return `<li class="expandable" onclick="toggleLiRaw(this,${e.id})">
+     <div class="k">${esc(e.kind)} ${e.author_id?`· <span class="who2">${esc(e.author_id)}</span>`:""}
+       · <span class="when">${esc(when)}</span><span class="toggle">▸ raw</span></div>
+     <div class="s">${esc(e.summary||"")}</div>
+     <pre class="raw" id="liraw-${e.id}" style="display:none">${esc(JSON.stringify(e.raw, null, 2))}</pre>
+   </li>`;
+}
+function toggleLiRaw(li, id){
+  const p = document.getElementById("liraw-"+id);
+  if(p) p.style.display = (p.style.display==="none") ? "block" : "none";
 }
 function closeDrawer(){ document.getElementById("drawer").classList.remove("open"); }
 

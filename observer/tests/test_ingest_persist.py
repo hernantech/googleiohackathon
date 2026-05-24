@@ -132,3 +132,71 @@ def test_non_replayable_events_are_not_deduped():
     persist_event(store, S.sme_response(sme="@firmware", claim="baud mismatch"))
     rows = store.recent_events(limit=10, kinds=("SmeResponse",))
     assert len(rows) == 2
+
+
+# ── coverage for kinds that previously had no summary / were invisible ─────────
+
+def test_tool_result_gets_a_summary_and_persists():
+    row = normalize(S.tool_result(result='{"datasheet":"ok"}'))
+    assert row is not None and row["kind"] == "ToolResult"
+    assert row["summary"] and "datasheet" in row["summary"]
+
+
+def test_channel_update_persists_with_snippet():
+    row = normalize(S.channel_update(delta="hello", done=True))
+    assert row is not None and row["kind"] == "ChannelUpdate"
+    assert "hello" in row["summary"]
+
+
+def test_snapshot_analysis_chatmessage_surfaces_analysis_text():
+    row = normalize(S.snapshot_chat(analysis="Solder bridge on U4 pin 12."))
+    assert row["kind"] == "ChatMessage"
+    # the manager-relevant analysis prose, not an opaque JSON blob
+    assert "snapshot:" in row["summary"]
+    assert "Solder bridge" in row["summary"]
+
+
+def test_goodbye_and_checkpoint_and_transcript_persist():
+    assert normalize(S.goodbye())["kind"] == "Goodbye"
+    assert normalize(S.checkpoint())["kind"] == "CheckpointMarker"
+    t = normalize(S.transcript(text="probe net 3V3", partial=False))
+    assert t["summary"] == "probe net 3V3"
+
+
+def test_replay_envelopes_and_pong_are_dropped():
+    # the per-reconnect replay envelopes have no stable id ⇒ never persisted
+    for k in ("ChannelList", "ReplayDone", "BackpressureNotice"):
+        assert normalize(S.replay_envelope(k)) is None
+    assert normalize(S.pong()) is None
+
+
+def test_presence_event_attributed_to_its_session():
+    """Forward-hook (see ATTRIBUTION.md): a Presence event is persisted keyed by
+    its own sessionId, overriding the observer's single-bucket default."""
+    presence = {"kind": "Presence", "sessionId": "op-9", "client": "phone",
+                "state": "online", "ts": 1}
+    row = normalize(presence, default_session_id="observer-dashboard")
+    assert row is not None
+    assert row["session_id"] == "op-9"
+    assert "online" in row["summary"]
+
+
+def test_tagged_event_attributed_to_origin_over_default():
+    """Forward-hook: once fan-out events carry a real sessionId, the observer
+    keys them to that operator instead of the single observer bucket."""
+    tagged = S.sme_response()
+    tagged["sessionId"] = "op-bench-07"
+    row = normalize(tagged, default_session_id="observer-dashboard")
+    assert row["session_id"] == "op-bench-07"
+
+
+def test_manager_relevant_kinds_are_never_dropped():
+    """Guard against a regression that silently drops a manager-relevant kind."""
+    keep = [
+        S.sme_response(), S.summon(), S.confirmation_request(),
+        S.confirmation_response(), S.safety(), S.dissent(), S.tool_call(),
+        S.checkpoint(), S.transcript(), S.goodbye(), S.hello(),
+        S.tool_result(), S.channel_update(),
+    ]
+    for ev in keep:
+        assert normalize(ev) is not None, f"{ev['kind']} must be persisted"

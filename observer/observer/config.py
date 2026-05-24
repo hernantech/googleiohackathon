@@ -31,6 +31,16 @@ class Settings:
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
     gemini_model: str = os.getenv("OBSERVER_GEMINI_MODEL", "gemini-3.5-flash")
 
+    # Distiller backend:
+    #   "managed"   → headlines come from a real Antigravity MANAGED AGENT
+    #                 (Interactions API), reusing one warm env across cycles;
+    #   "model"     → a plain gemini-3.5-flash generate_content call;
+    #   "heuristic" → force the no-network templated headline.
+    # Default "managed" so the management layer genuinely uses a managed agent
+    # whenever a key is present (the cold first cycle falls back to heuristic).
+    distill_mode: str = os.getenv("OBSERVER_DISTILL_MODE", "managed")
+    managed_agent: str = os.getenv("OBSERVER_MANAGED_AGENT", "antigravity-preview-05-2026")
+
     # WS reconnect backoff bounds (seconds).
     reconnect_min_s: float = float(os.getenv("OBSERVER_RECONNECT_MIN_S", "1"))
     reconnect_max_s: float = float(os.getenv("OBSERVER_RECONNECT_MAX_S", "30"))
