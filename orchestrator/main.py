@@ -162,11 +162,15 @@ async def _startup() -> None:
     log.info("forge orchestrator up | integrations=%s", settings.integration_status())
     app.state.heartbeat = asyncio.create_task(_heartbeat_loop())
     app.state.sandbox_keepwarm = asyncio.create_task(_sandbox_keepwarm_loop())
+    # Provision the per-SME managed-agent envs UP FRONT (the now-default summon
+    # path) off the critical path, then keep them warm. Both no-op offline.
+    app.state.sme_prewarm = asyncio.create_task(_sme_prewarm())
+    app.state.sme_keepwarm = asyncio.create_task(_sme_keepwarm_loop())
 
 
 @app.on_event("shutdown")
 async def _shutdown() -> None:
-    for name in ("heartbeat", "sandbox_keepwarm"):
+    for name in ("heartbeat", "sandbox_keepwarm", "sme_prewarm", "sme_keepwarm"):
         task = getattr(app.state, name, None)
         if task:
             task.cancel()
@@ -202,6 +206,50 @@ async def _sandbox_keepwarm_loop() -> None:
     while True:
         with contextlib.suppress(Exception):
             await asyncio.to_thread(keepwarm_ping)
+        await asyncio.sleep(SANDBOX_KEEPWARM_INTERVAL_S)
+
+
+async def _sme_prewarm() -> None:
+    """Provision one warm Antigravity managed-agent environment per SME up front,
+    off the critical path, so the FIRST live summon on the (now-default) per-SME
+    sandbox path is WARM (the ~70s cold-start is paid here at startup, not on the
+    operator's first question). A no-op when there is no GEMINI_API_KEY /
+    google-genai or when FORGE_SME_USE_SANDBOX=0 (prewarm_smes returns {} —
+    nothing provisioned). Runs once in a worker thread (the create calls are
+    blocking). Never raises (prewarm_smes swallows per-SME failures, 01 §7)."""
+    if not settings.gemini_api_key:
+        return  # offline boot: nothing to provision (07 §2.4)
+    try:
+        from orchestrator.genai_seams import prewarm_smes
+    except Exception as e:  # noqa: BLE001 — google-genai absent though keyed
+        log.warning("SME prewarm disabled (%s)", e)
+        return
+    with contextlib.suppress(Exception):
+        envs = await asyncio.to_thread(prewarm_smes)
+        if envs:
+            log.info("prewarmed %d per-SME managed-agent envs", len(envs))
+
+
+async def _sme_keepwarm_loop() -> None:
+    """Keep every per-SME managed-agent environment HOT so a summon never pays a
+    cold-start (idle Antigravity envs snapshot at ~15 min). Each tick pings every
+    provisioned per-SME env on the same ~240s cadence as the shared run_analysis
+    sandbox. A no-op when there is no GEMINI_API_KEY / google-genai or when the
+    sandbox path is off (no envs are ever provisioned → nothing to ping).
+    Cancelled cleanly on shutdown."""
+    if not settings.gemini_api_key:
+        return  # offline boot: nothing to keep warm (07 §2.4)
+    try:
+        from orchestrator.genai_seams import (
+            SANDBOX_KEEPWARM_INTERVAL_S,
+            keepwarm_sme_envs,
+        )
+    except Exception as e:  # noqa: BLE001 — google-genai absent though keyed
+        log.warning("SME keep-warm disabled (%s)", e)
+        return
+    while True:
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(keepwarm_sme_envs)
         await asyncio.sleep(SANDBOX_KEEPWARM_INTERVAL_S)
 
 
