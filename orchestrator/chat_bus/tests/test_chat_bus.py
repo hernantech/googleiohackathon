@@ -527,3 +527,187 @@ def test_envelopes_not_in_agent_event_union():
                 ReplayDone(resumeTs=now_ns())):
         with pytest.raises(ValidationError):
             parse_agent_event(env.model_dump_json())
+
+
+# ─────────── per-operator attribution hook (observer/ATTRIBUTION.md) ───────────
+
+from orchestrator.chat_bus.envelopes import Presence
+from orchestrator.chat_bus.ws import WebSocketTransport, event_to_json
+
+
+class StampingTransport:
+    """A Transport whose `send` accepts the additive `extra=` kwarg (like the
+    real WebSocketTransport) and records the serialized JSON the subscriber
+    would actually receive — so a test can assert on the stamped frame."""
+
+    def __init__(self):
+        self.frames: list[str] = []          # serialized JSON, as the client sees it
+        self.events: list[object] = []        # raw events (for kind assertions)
+
+    def send(self, event: object, *, extra=None) -> None:
+        self.events.append(event)
+        self.frames.append(event_to_json(event, extra=extra))
+
+
+def _frames_as_dicts(transport: StampingTransport) -> list[dict]:
+    return [json.loads(f) for f in transport.frames]
+
+
+def test_attribution_fanned_out_frame_carries_origin_session_id():
+    """(a) A fanned-out frame carries the ORIGINATING sessionId in its JSON.
+
+    A ChatMessage (no sessionId of its own) published with
+    `origin_session_id="op-bench-07"` reaches the subscriber stamped with that id,
+    so a passive subscriber (the observer) can attribute it per-operator."""
+    bus = ChatBus()
+    transport = StampingTransport()
+    bus.subscribe(Session("observer-dashboard", transport))
+    transport.frames.clear()   # drop the subscribe-time Presence frame
+    transport.events.clear()
+
+    bus.publish(chat("#power", "rail looks fine", message_id="01HATTR", ts=now_ns()),
+                origin_session_id="op-bench-07")
+
+    cms = [d for d in _frames_as_dicts(transport) if d.get("kind") == "ChatMessage"]
+    assert len(cms) == 1
+    assert cms[0]["sessionId"] == "op-bench-07"     # stamped originator
+    assert cms[0]["messageId"] == "01HATTR"          # payload intact
+
+    # Untagged publish stays byte-for-byte what it was before (no sessionId key).
+    transport.frames.clear()
+    bus.publish(chat("#power", "untagged", message_id="01HBARE", ts=now_ns()))
+    bare = [d for d in _frames_as_dicts(transport) if d.get("kind") == "ChatMessage"]
+    assert bare and "sessionId" not in bare[0]
+
+
+def test_attribution_event_with_own_session_id_is_unchanged():
+    """(c) An event that already carries its own sessionId (e.g. Hello) keeps it —
+    the origin stamp never clobbers an existing field."""
+    from orchestrator.proto.events import Hello
+
+    hello = Hello(client="phone", sessionId="hello-own-sid", protocolVersion="2.0")
+
+    # Even when a DIFFERENT origin is threaded through, Hello.sessionId wins.
+    stamped = json.loads(event_to_json(hello, extra={"sessionId": "some-other-origin"}))
+    assert stamped["sessionId"] == "hello-own-sid"
+    assert stamped["client"] == "phone"
+
+    # And with no extra at all, the frame is exactly the model's own dump.
+    assert event_to_json(hello) == hello.model_dump_json()
+    assert json.loads(event_to_json(hello))["sessionId"] == "hello-own-sid"
+
+
+def test_attribution_presence_on_subscribe_and_unsubscribe():
+    """(b) Presence(online) is published on subscribe; Presence(offline) on
+    unsubscribe — each tagged with the operator's id (and client label),
+    delivered to a passive subscriber (the observer)."""
+    bus = ChatBus()
+    observer = StampingTransport()
+    bus.subscribe(Session("observer-dashboard", observer))
+    observer.frames.clear()
+    observer.events.clear()
+
+    # subscribe a real operator → observer sees Presence(online)
+    bus.subscribe(Session("op-bench-07", StampingTransport()), client="phone")
+    online = [d for d in _frames_as_dicts(observer) if d.get("kind") == "Presence"]
+    assert len(online) == 1
+    assert online[0]["state"] == "online"
+    assert online[0]["sessionId"] == "op-bench-07"
+    assert online[0]["client"] == "phone"
+    assert isinstance(online[0]["ts"], int)
+
+    observer.frames.clear()
+    observer.events.clear()
+
+    # unsubscribe → observer sees Presence(offline), same id + remembered label
+    bus.unsubscribe("op-bench-07")
+    offline = [d for d in _frames_as_dicts(observer) if d.get("kind") == "Presence"]
+    assert len(offline) == 1
+    assert offline[0]["state"] == "offline"
+    assert offline[0]["sessionId"] == "op-bench-07"
+    assert offline[0]["client"] == "phone"     # remembered from subscribe
+
+
+def test_attribution_presence_not_delivered_to_self():
+    """A connecting session never receives its OWN presence — so it can't jump
+    ahead of that session's replay handshake (ChannelList must stay first)."""
+    bus = ChatBus()
+    own = StampingTransport()
+    bus.subscribe(Session("op-solo", own), client="phone")
+    assert not any(d.get("kind") == "Presence" for d in _frames_as_dicts(own))
+
+
+def test_attribution_presence_fans_out_to_other_subscribers():
+    """A second operator's connect/disconnect is delivered to an already-connected
+    passive subscriber (the observer), tagged with the connecting operator's id."""
+    bus = ChatBus()
+    observer = StampingTransport()
+    bus.subscribe(Session("observer-dashboard", observer))
+    observer.frames.clear()
+
+    op = StampingTransport()
+    bus.subscribe(Session("op-bench-07", op), client="quest")
+
+    seen = [d for d in _frames_as_dicts(observer)
+            if d.get("kind") == "Presence" and d.get("sessionId") == "op-bench-07"]
+    assert seen and seen[0]["state"] == "online" and seen[0]["client"] == "quest"
+
+
+def test_attribution_presence_not_in_replay_buffer():
+    """Presence is NOT recorded into the replay buffer, so it never re-fires on
+    reconnect (only ChatMessages replay)."""
+    bus = ChatBus()
+    transport = StampingTransport()
+    bus.subscribe(Session("01HREPLAY", transport))   # emits Presence(online)
+    sent = bus.replay("01HREPLAY")
+    assert not any(getattr(e, "kind", None) == "Presence" for e in sent)
+
+
+def test_attribution_bus_flush_carries_origin_to_websocket_transport():
+    """End-to-end through the real WebSocketTransport: Session.flush stamps the
+    origin onto the wire frame the writer emits."""
+    import asyncio
+
+    class FakeWS:
+        def __init__(self):
+            self.sent: list[str] = []
+        async def send_text(self, text: str) -> None:
+            self.sent.append(text)
+
+    async def run():
+        ws = FakeWS()
+        transport = WebSocketTransport(ws)
+        session = Session("op-9", transport)
+        session.enqueue(chat("#power", "hi", message_id="01HWS", ts=now_ns()),
+                        origin_session_id="op-9")
+        session.flush()                  # → transport.send(event, extra={...})
+        writer = asyncio.create_task(transport.writer())
+        await asyncio.sleep(0)           # let the writer drain one frame
+        transport.close()
+        await writer
+        return ws.sent
+
+    frames = asyncio.run(run())
+    dicts = [json.loads(f) for f in frames]
+    cm = next(d for d in dicts if d.get("kind") == "ChatMessage")
+    assert cm["sessionId"] == "op-9"
+    assert cm["messageId"] == "01HWS"
+
+
+def test_attribution_backward_compatible_send_without_extra():
+    """A bare Transport (send(event) only — the existing FakeTransport contract)
+    still works: Session.flush degrades to send(event) when `extra` is rejected.
+    Both a fanned-out Presence (from another operator) and a tagged ChatMessage
+    reach the bare sink as raw events with no exception."""
+    bus = ChatBus()
+    transport = FakeTransport()          # bare send(event), no extra kwarg
+    bus.subscribe(Session("observer-bare", transport))
+    transport.received.clear()
+
+    # Another operator connects → Presence fans out to the bare observer sink.
+    bus.subscribe(Session("op-other", FakeTransport()), client="phone")
+    bus.publish(chat("#power", "hi", message_id="01HBARE2", ts=now_ns()),
+                origin_session_id="op-other")
+    kinds = [getattr(e, "kind", None) for e in transport.received]
+    assert "Presence" in kinds
+    assert "ChatMessage" in kinds
