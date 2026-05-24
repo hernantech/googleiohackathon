@@ -28,7 +28,8 @@ from orchestrator.graph.state import RouteDecision
 from orchestrator.proto.events import SmeResponse, now_ns
 
 
-_PER_SME_DELAY_S = 0.30  # each SME "thinks" this long inside the worker thread
+_FAST_SME_DELAY_S = 0.05   # @power concludes quickly...
+_SLOW_SME_DELAY_S = 0.40   # ...while @signal is still thinking
 
 
 def _drain_replay(ws) -> None:
@@ -38,23 +39,36 @@ def _drain_replay(ws) -> None:
 
 
 def test_chat_streams_per_sme_messages_spread_over_time(monkeypatch):
-    """With a slow two-SME guild, the #power message must arrive at least one
-    per-SME delay BEFORE the #signal message — proving incremental flush."""
+    """The #power message must arrive well BEFORE #signal finishes — proving the
+    writer flushed the @power frame mid-run (incremental), not in one end-of-run
+    burst.
+
+    The guild now fans out CONCURRENTLY (Part C.1), so this no longer relies on
+    sequential execution: @power is a FAST SME and @signal a SLOW one running in
+    parallel, and the engine flushes each SME's frame in roster order as soon as
+    it resolves. The fast @power frame therefore reaches the WS a clear margin
+    before the slow @signal frame — only possible if the writer got loop time
+    mid-run (the PR #12 fix), and only this ordering is possible because flushing
+    is roster-ordered + incremental, not batched."""
     import orchestrator.main as main_mod
 
     # Hermetic bus/sessions so this test owns the replay buffer + fan-out.
     monkeypatch.setattr(main_mod, "bus", ChatBus())
     monkeypatch.setattr(main_mod, "_sessions", {})
 
-    # Force a deterministic two-SME guild with a measurable per-SME delay.
-    def slow_summon(sme, summon):
-        time.sleep(_PER_SME_DELAY_S)
+    # Force a deterministic two-SME guild: @power fast, @signal slow. They run
+    # concurrently, so wall-clock ≈ the slow SME — but the fast SME's frame must
+    # still stream out first (incremental, roster-ordered flush).
+    delays = {"@power": _FAST_SME_DELAY_S, "@signal": _SLOW_SME_DELAY_S}
+
+    def staggered_summon(sme, summon):
+        time.sleep(delays[sme])
         return SmeResponse(smeId=sme, callId=summon.callId, confidence=0.8,
                            claim=f"{sme} claim", rationale="r", ts=now_ns())
 
     monkeypatch.setattr(main_mod.deps, "classify",
                         lambda t, r: RouteDecision(True, ["@power", "@signal"], "topic"))
-    monkeypatch.setattr(main_mod.deps, "summon_one", slow_summon)
+    monkeypatch.setattr(main_mod.deps, "summon_one", staggered_summon)
 
     client = TestClient(main_mod.app)
     with client.websocket_connect("/v2/chat?sessionId=stream-timing") as ws:
@@ -74,10 +88,10 @@ def test_chat_streams_per_sme_messages_spread_over_time(monkeypatch):
                 break
 
     assert "#power" in arrivals and "#signal" in arrivals, arrivals
-    # #power finished a full SME-delay before #signal → the writer flushed the
-    # @power frame mid-run (incremental), not in one end-of-run burst.
+    # The fast @power frame flushed well before the slow @signal frame → the
+    # writer flushed mid-run (incremental), not in one end-of-run burst.
     gap = arrivals["#signal"] - arrivals["#power"]
-    assert gap >= _PER_SME_DELAY_S * 0.5, (
+    assert gap >= (_SLOW_SME_DELAY_S - _FAST_SME_DELAY_S) * 0.5, (
         f"per-SME frames arrived in a burst (gap={gap:.3f}s); not streaming")
     # Order is preserved: @power before @signal.
     assert order.index("#power") < order.index("#signal")
