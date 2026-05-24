@@ -255,10 +255,16 @@ async def _sme_keepwarm_loop() -> None:
 
 @app.get("/healthz")
 async def healthz() -> dict:
+    integrations = settings.integration_status()
+    # Additive: report the board the KnowledgeAdapter ACTUALLY loaded (honors
+    # FORGE_BOARD, BOARD_PROFILE, then the bundled demo) — the env-derived
+    # `board_profile` above only sees BOARD_PROFILE, so under FORGE_BOARD=25e it
+    # would still say "bundled-demo". `board` truthfully shows "25e-precharge-2026-05".
+    integrations["board"] = knowledge.board_profile.id or "empty"
     return {
         "ok": True,
         "protocol_version": settings.protocol_version,
-        "integrations": settings.integration_status(),
+        "integrations": integrations,
         "sessions": len(_sessions),
     }
 
