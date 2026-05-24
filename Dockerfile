@@ -15,14 +15,26 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Project metadata + source (setuptools needs the package present at build),
-# then install. bench_knowledge/ ships the default bq79616 demo board profile.
-COPY pyproject.toml ./
-COPY orchestrator ./orchestrator
-COPY bench_knowledge ./bench_knowledge
+# ── Dependency layer ────────────────────────────────────────────────────────
+# Install third-party deps ONLY, keyed on pyproject.toml. A throwaway one-line
+# package stub lets the setuptools backend build without the real source, so
+# this (slow) layer's sole cache input is pyproject.toml: a source-only edit
+# reuses it from cache and skips the google-genai/grpcio download+compile.
 # [live] pulls google-genai so the real gemini-3.5-flash seams activate when
 # GEMINI_API_KEY is set (ROADMAP Phase 3/4). Without a key it still boots stub.
-RUN pip install ".[live]"
+COPY pyproject.toml ./
+RUN mkdir -p orchestrator && touch orchestrator/__init__.py \
+    && pip install ".[live]"
+
+# ── Source layer ────────────────────────────────────────────────────────────
+# Copy the real package over the stub and reinstall ONLY the package itself;
+# deps are already satisfied above, so --no-deps makes this near-instant.
+# bench_knowledge/ (the default bq79616 demo board profile, loaded at runtime by
+# path — not part of the installed package) comes last so a board-profile edit
+# re-runs nothing but a file copy.
+COPY orchestrator ./orchestrator
+RUN pip install --no-deps --force-reinstall .
+COPY bench_knowledge ./bench_knowledge
 
 RUN useradd --create-home --uid 10001 forge
 USER forge
