@@ -12,10 +12,12 @@ Spec sources:
 - §7  Subscribe / Unsubscribe
 - §8  ErrorEvent
 - §10 ChannelHint
+- observer/ATTRIBUTION.md  Presence (additive per-operator attribution hook)
 """
 
 from __future__ import annotations
 
+import time
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -95,3 +97,22 @@ class ChannelHint(BaseModel):
     channelId: str
     hint: Literal["focus", "flash", "demote", "collapse"]
     reason: str
+
+
+# ──────────── per-operator attribution (observer/ATTRIBUTION.md) ────────────
+
+class Presence(BaseModel):
+    """Lightweight connect/disconnect signal so the observer dashboard can show
+    each operator as connected-vs-idle (observer/ATTRIBUTION.md §2).
+
+    A NEW additive kind that is intentionally NOT a member of the frozen
+    `AgentEvent` union in `orchestrator/proto/events.py` — like every other
+    envelope here it rides only on the chat bus, so existing clients ignore the
+    unknown `kind` (WP-3) while the observer reads it (keyed by `sessionId`).
+    """
+
+    kind: Literal["Presence"] = "Presence"
+    sessionId: str
+    client: str                                    # "phone" | "quest" | ...
+    state: Literal["online", "offline"]
+    ts: int = Field(default_factory=time.time_ns)  # ns, like every other event
