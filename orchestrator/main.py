@@ -25,7 +25,7 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
 from orchestrator.chat_bus.bus import ChatBus, Session
-from orchestrator.chat_bus.envelopes import Pong
+from orchestrator.chat_bus.envelopes import Pong, Presence
 from orchestrator.chat_bus.ws import WebSocketTransport
 from orchestrator.config import settings
 from orchestrator.graph.engine import GraphEngine
@@ -80,10 +80,14 @@ def _drain_to_bus(state: ForgeState) -> None:
     incremental sink during the run (state.streamedEvents — the summon notice,
     per-SME claims, per-tool-call activity) is skipped here so it is published
     exactly once. Only the not-yet-streamed remainder (consensus card, dissent,
-    LiveSpeaker transcript, checkpoints) is drained at the end."""
+    LiveSpeaker transcript, checkpoints) is drained at the end.
+
+    Each event is published with `origin_session_id=state.sessionId` so passive
+    subscribers (the observer) can attribute it to this operator
+    (observer/ATTRIBUTION.md §1)."""
     events = _take_undrained(state)
     if events:
-        bus.publish_many(events)
+        bus.publish_many(events, origin_session_id=state.sessionId)
 
 
 def _take_undrained(state: ForgeState) -> list:
@@ -100,9 +104,9 @@ def _take_undrained(state: ForgeState) -> list:
     return events
 
 
-def _make_loop_publisher(loop: asyncio.AbstractEventLoop):
+def _make_loop_publisher(loop: asyncio.AbstractEventLoop, origin_session_id: str):
     """Build a thread-safe (sink, drain) pair bound to `loop` for a run executed
-    via asyncio.to_thread.
+    via asyncio.to_thread, attributing everything to `origin_session_id`.
 
     The graph (worker thread) produces events; WebSocketTransport.send enqueues
     onto a per-session asyncio.Queue whose put_nowait is loop-affine and NOT
@@ -110,18 +114,28 @@ def _make_loop_publisher(loop: asyncio.AbstractEventLoop):
     call_soon_threadsafe — which both keeps the queue consistent AND wakes the
     writer coroutine so it flushes incrementally as each event arrives.
 
+    Both the streamed `emit` sink and the end-of-run `drain` stamp
+    `origin_session_id` so the observer can attribute every fanned-out frame to
+    this operator (observer/ATTRIBUTION.md §1).
+
     Returns:
       emit:  the GraphDeps.emit sink (one event → published on the loop).
       drain: publishes the not-yet-streamed remainder on the loop (idempotent;
              mirrors _drain_to_bus but loop-safe from a worker thread).
     """
+    def _publish(event: object) -> None:
+        bus.publish(event, origin_session_id=origin_session_id)
+
+    def _publish_many(events: list) -> None:
+        bus.publish_many(events, origin_session_id=origin_session_id)
+
     def emit(event: object) -> None:
-        loop.call_soon_threadsafe(bus.publish, event)
+        loop.call_soon_threadsafe(_publish, event)
 
     def drain(state: ForgeState) -> None:
         events = _take_undrained(state)
         if events:
-            loop.call_soon_threadsafe(bus.publish_many, events)
+            loop.call_soon_threadsafe(_publish_many, events)
 
     return emit, drain
 
@@ -210,6 +224,7 @@ async def root() -> dict:
 @app.websocket("/v2/chat")
 async def chat(ws: WebSocket) -> None:
     session_id = ws.query_params.get("sessionId")
+    client = ws.query_params.get("client")  # "phone" | "quest" | ... — for Presence
     replay_from = ws.query_params.get("replayFrom")
     if not session_id:
         await ws.close(code=1008)  # policy violation: sessionId required
@@ -222,7 +237,8 @@ async def chat(ws: WebSocket) -> None:
 
     transport = WebSocketTransport(ws)
     session = Session(session_id, transport)
-    bus.subscribe(session)
+    # subscribe emits Presence(online) tagged with session_id (ATTRIBUTION.md §2).
+    bus.subscribe(session, client=client)
     writer = asyncio.create_task(transport.writer())
     ctx = get_ctx(session_id)
 
@@ -245,14 +261,14 @@ async def chat(ws: WebSocket) -> None:
                 # every streamed frame arrives in one burst at the end). The
                 # loop-bound sink marshals each publish back onto the loop
                 # (asyncio.Queue.put_nowait is not thread-safe).
-                emit, drain = _make_loop_publisher(asyncio.get_running_loop())
+                emit, drain = _make_loop_publisher(asyncio.get_running_loop(), session_id)
                 body = data.get("body", "")
                 await asyncio.to_thread(
                     lambda: ctx.engine.run(ctx.state, body, emit=emit))
                 drain(ctx.state)
             elif kind == "ConfirmationResponse":
                 resp = ConfirmationResponse(**{k: v for k, v in data.items() if k != "kind"})
-                emit, drain = _make_loop_publisher(asyncio.get_running_loop())
+                emit, drain = _make_loop_publisher(asyncio.get_running_loop(), session_id)
                 await asyncio.to_thread(
                     lambda: ctx.engine.resume(ctx.state, resp, emit=emit))
                 bus.resolve_confirmation(resp.callId)
@@ -334,7 +350,7 @@ def _make_live_graph_hooks(session_id: str):
         # The engine runs in a worker thread; the loop-bound sink marshals each
         # publish back onto the loop so streamed deliberation flushes AS IT
         # HAPPENS (asyncio.Queue.put_nowait is not thread-safe).
-        emit, drain = _make_loop_publisher(asyncio.get_running_loop())
+        emit, drain = _make_loop_publisher(asyncio.get_running_loop(), session_id)
         result = await asyncio.to_thread(
             lambda: ctx.engine.run(ctx.state, transcript, emit=emit))
         drain(ctx.state)
@@ -361,7 +377,7 @@ def _make_live_graph_hooks(session_id: str):
 
         # summon_guild path (unchanged): run the guild, inject the merged result.
         transcript = str(args.get("topic") or args.get("text") or name)
-        emit, drain = _make_loop_publisher(asyncio.get_running_loop())
+        emit, drain = _make_loop_publisher(asyncio.get_running_loop(), session_id)
 
         def _run() -> dict:
             ctx.engine.run(ctx.state, transcript, emit=emit)
@@ -418,6 +434,7 @@ async def live(ws: WebSocket) -> None:
     from orchestrator.live.bridge import LiveDuplexBridge
 
     session_id = ws.query_params.get("sessionId")
+    client = ws.query_params.get("client") or "quest"  # live client label for Presence
     if not session_id:
         await ws.close(code=1008)
         return
@@ -426,6 +443,28 @@ async def live(ws: WebSocket) -> None:
         await ws.close(code=1008)
         return
     await ws.accept(subprotocol=subprotocol)
+
+    # /v2/live does NOT subscribe to the chat bus (it's a media WS), so mirror
+    # presence explicitly here — fanned out to whoever IS subscribed (the
+    # observer) — so a live-only operator still appears (ATTRIBUTION.md §2).
+    # `bus.publish` is a no-op when nobody is subscribed.
+    bus.publish(
+        Presence(sessionId=session_id, client=client, state="online"),
+        origin_session_id=session_id,
+    )
+    try:
+        await _live_session(ws, session_id, subprotocol)
+    finally:
+        bus.publish(
+            Presence(sessionId=session_id, client=client, state="offline"),
+            origin_session_id=session_id,
+        )
+
+
+async def _live_session(ws: WebSocket, session_id: str, subprotocol: str | None) -> None:
+    """The actual /v2/live media loop (stub or duplex). Split out so the `live`
+    endpoint can bracket it with Presence(online)/Presence(offline)."""
+    from orchestrator.live.bridge import LiveDuplexBridge
 
     # Decide whether to *attempt* a real duplex Gemini Live session (gated behind
     # GEMINI_API_KEY + the [live] extra). The actual connect happens inside the
