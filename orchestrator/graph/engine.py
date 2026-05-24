@@ -9,9 +9,11 @@ confirmation the run returns `paused`; `resume()` applies the operator's answer.
 
 from __future__ import annotations
 
+import concurrent.futures
 import contextlib
 import inspect
 import json
+import os
 import re
 
 from orchestrator.graph.state import (
@@ -39,6 +41,11 @@ from orchestrator.safety.gate import GateSession
 
 _MENTION = re.compile(r"@([a-z0-9\-]+)", re.I)
 CROSS_EXAM_CAP = 2
+#: Per-SME wall-clock cap for the concurrent fan-out. Generous: a tool-loop SME
+#: with a run_analysis sandbox round can take a while, and the opt-in
+#: managed-agent path runs ~60-80s. On timeout/error → a confidence-0
+#: <timeout> placeholder, the others still land (GR-5). Tunable via env.
+SME_WAIT_S = float(os.getenv("FORGE_SME_WAIT_S", "150"))
 
 
 class GraphEngine:
@@ -183,50 +190,103 @@ class GraphEngine:
         return decision
 
     def _parallel_summon(self, state: ForgeState) -> None:
-        """Fan out; per-SME timeout → confidence-0 placeholder, others continue (GR-5).
+        """Fan out to all SMEs CONCURRENTLY (GR-5). The tool-loop + run_analysis
+        make each SME slow (and the opt-in managed-agent path runs ~60-80s), so a
+        sequential loop would be N× the slowest SME; threads make the guild ≈ the
+        SLOWEST single SME. Each SME runs under a per-SME wall-clock timeout
+        (SME_WAIT_S) → on timeout/error a confidence-0 <timeout> placeholder; the
+        others still land.
 
-        Streams deliberation AS IT HAPPENS (not batched at the end): a summon
-        notice to #live-feed up front, then — per SME, the moment it completes —
-        its claim+rationale to #<sme>, plus a short #<sme> note for each knowledge
-        tool the SME called (so retrieval is visible). All via self._emit so the
-        chat bus sees them live while state.outboundEvents stays the full record."""
+        Streaming + ordering are preserved exactly:
+        * each worker thread buffers its own stream events (the summon_one
+          on_tool_call activity, then its claim) into a PRIVATE list — workers
+          never touch self._emit / state, so there is no cross-thread race;
+        * after the fan-out joins, we replay each SME's buffer to self._emit in
+          DETERMINISTIC ROSTER ORDER and write state.smeResponses in that same
+          order. So the bus sees #<sme> tool-calls-then-claim per SME, and SMEs
+          in roster order — identical to the old sequential stream, just faster."""
         summon = state.pendingSummon
-        state.activeSmes = list(summon.smes)
+        smes = list(summon.smes)
+        state.activeSmes = smes
 
         # 1) summon notice → #live-feed, immediately (only on the first round so
-        #    cross-exam re-summons don't spam the feed).
+        #    cross-exam re-summons don't spam the feed). Emitted from the main
+        #    thread BEFORE the fan-out so it always streams first.
         if state.crossExamRound == 0:
-            roster = ", ".join(summon.smes)
+            roster = ", ".join(smes)
             self._emit(state, ChatMessage(
                 channelId="#live-feed", authorId="@forge", authorKind="system",
                 body=f"summoned {roster}", messageId=new_ulid(), ts=now_ns()))
 
-        for sme in summon.smes:
-            # 3) surface each knowledge tool call to the SME's channel AS IT
-            #    happens. summon_one captures the calls in real_summon_one's loop;
-            #    we pass a per-SME emit so they stream rather than vanish. The
-            #    callback is opt-in: only wired when summon_one accepts `emit`.
-            def _on_tool_call(call: dict, _sme: str = sme) -> None:
-                self._emit(state, ChatMessage(
-                    channelId=_sme_channel(_sme), authorId=_sme, authorKind="sme",
-                    body=f"{_sme} → {_format_tool_call(call)}",
+        def _work(sme: str) -> tuple[SmeResponse, list[ChatMessage]]:
+            """Run ONE SME (in a worker thread). Buffers this SME's stream events
+            (tool-call activity, then its claim) into a private list and returns
+            (response, buffer). Never touches self._emit / shared state — the
+            buffer is flushed by the main thread in roster order afterwards."""
+            buf: list[ChatMessage] = []
+
+            # surface each knowledge tool call to this SME's channel; appended to
+            # the worker-local buffer (not emitted yet). The callback is opt-in:
+            # only wired when summon_one accepts `on_tool_call` (real seam does).
+            def _on_tool_call(call: dict) -> None:
+                buf.append(ChatMessage(
+                    channelId=_sme_channel(sme), authorId=sme, authorKind="sme",
+                    body=f"{sme} → {_format_tool_call(call)}",
                     messageId=new_ulid(), ts=now_ns()))
 
             try:
                 resp = self._summon_one(sme, summon, _on_tool_call)
-            except Exception as e:  # noqa: BLE001 — timeout / cold-start
+            except Exception as e:  # noqa: BLE001 — call error inside the worker
                 resp = SmeResponse(
                     smeId=sme, callId=summon.callId, confidence=0.0,
                     claim="<timeout>", rationale=f"{e!r}", ts=now_ns())
-            state.smeResponses[sme] = resp
-            for action in resp.proposedActions:
-                state.invokerOf[id(action)] = sme
-
-            # 2) per-SME completion → claim+rationale to #<sme>, RIGHT AWAY (not
-            #    batched after every SME finishes).
-            self._emit(state, ChatMessage(
+            # per-SME completion → claim+rationale to #<sme> (buffered, after its
+            # tool-call activity so retrieval shows before the conclusion).
+            buf.append(ChatMessage(
                 channelId=_sme_channel(sme), authorId=sme, authorKind="sme",
                 body=_format_claim(resp), messageId=new_ulid(), ts=now_ns()))
+            return resp, buf
+
+        # NB: we deliberately do NOT use the executor as a `with` context — its
+        # implicit shutdown(wait=True) would BLOCK on a hung SME past its
+        # per-SME timeout, re-coupling the guild to the slowest (possibly stuck)
+        # worker. Instead we collect each future under SME_WAIT_S and tear the
+        # pool down with wait=False so an abandoned worker can't wedge the run
+        # (mirrors run_analysis; 01 §7 never-fail-stop).
+        #
+        # We wait on the futures in ROSTER ORDER and flush each SME's buffered
+        # stream events + write its state THE MOMENT that SME resolves — so:
+        #   * state.smeResponses is written in deterministic roster order;
+        #   * the bus sees #<sme> tool-calls-then-claim per SME, SMEs in roster
+        #     order — identical to the old sequential stream;
+        #   * AND the flush is INCREMENTAL (not one end-of-run burst): each SME's
+        #     events reach the per-session WS writer as soon as that SME (and all
+        #     earlier-in-roster SMEs) are done — preserving the PR #12 fix.
+        # self._emit / state are touched ONLY here on the main thread, so the
+        # publisher stays thread-safe / marshalled exactly as today.
+        ex = concurrent.futures.ThreadPoolExecutor(
+            max_workers=max(1, len(smes)), thread_name_prefix="sme")
+        try:
+            futs = {sme: ex.submit(_work, sme) for sme in smes}
+            for sme in smes:
+                try:
+                    resp, buf = futs[sme].result(timeout=SME_WAIT_S)
+                except Exception as e:  # noqa: BLE001 — wall-clock timeout / error
+                    # abandon the worker (do not join a hung SME) → placeholder.
+                    futs[sme].cancel()
+                    resp = SmeResponse(
+                        smeId=sme, callId=summon.callId, confidence=0.0,
+                        claim="<timeout>", rationale=f"{e!r}", ts=now_ns())
+                    buf = [ChatMessage(
+                        channelId=_sme_channel(sme), authorId=sme, authorKind="sme",
+                        body=_format_claim(resp), messageId=new_ulid(), ts=now_ns())]
+                state.smeResponses[sme] = resp
+                for action in resp.proposedActions:
+                    state.invokerOf[id(action)] = sme
+                for msg in buf:
+                    self._emit(state, msg)
+        finally:
+            ex.shutdown(wait=False)  # do NOT block on a hung worker
 
     def _summon_one(self, sme: str, summon, on_tool_call) -> SmeResponse:
         """Call deps.summon_one, threading a per-tool-call emit when the seam

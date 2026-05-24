@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import threading
+from pathlib import Path
 from typing import Callable
 
 from orchestrator.graph.state import DissentResult, GraphDeps, RouteDecision
@@ -65,6 +66,88 @@ SME_ROLES = {
 }
 
 _client = None
+
+# ── SME persona/skill packs (smes/<id>/AGENTS.md + SKILL.md, spec 02) ────────
+#
+# When a pack exists on disk it provides the RICH persona (the AGENTS.md "Role"
+# + lane + defer-to + never-invent rule) as the SME's system instruction, with
+# the SKILL.md tool-usage contract appended (bounded). When absent, we fall back
+# to the inline SME_ROLES one-liner — so zero-config boot still works and the
+# packs are a purely additive upgrade (they ship in the image; see Dockerfile +
+# pyproject packaging). Loaded + cached ONCE, lazily, module-level.
+
+#: smeId ("@power") -> assembled persona text (None = no pack on disk).
+_sme_packs: "dict[str, str | None]" = {}
+_sme_packs_lock = threading.Lock()
+
+#: Cap on SKILL.md text folded into the persona (defensive bound on prompt size).
+SME_SKILL_MAX_CHARS = int(os.getenv("FORGE_SME_SKILL_MAX_CHARS", "2500"))
+
+
+def _smes_dir() -> Path:
+    """Resolve the repo's `smes/` directory robustly.
+
+    `FORGE_SMES_DIR` wins if set (lets the container point at the shipped packs).
+    Otherwise we walk up from this file looking for a `smes/` dir — works from a
+    source checkout AND from the installed package in the image (the packs are
+    COPYed alongside the repo root). Returns the first match, else a best-effort
+    repo-root/smes path (which simply won't exist → graceful one-liner fallback)."""
+    env = os.getenv("FORGE_SMES_DIR")
+    if env:
+        return Path(env)
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        cand = parent / "smes"
+        if cand.is_dir():
+            return cand
+    # repo root is two up from orchestrator/genai_seams.py in a checkout.
+    return here.parents[1] / "smes"
+
+
+def _build_persona(sme_id: str) -> "str | None":
+    """Assemble the system instruction for `sme_id` from its on-disk pack, or
+    None when no AGENTS.md exists. The AGENTS.md is the persona; SKILL.md (the
+    tool-usage + output contract) is appended, bounded, so the loop is grounded
+    in the SME's real specialty. Never raises — any read error → None (one-liner
+    fallback, 01 §7 never-fail-stop)."""
+    name = sme_id.lstrip("@#")
+    base = _smes_dir() / name
+    try:
+        agents = base / "AGENTS.md"
+        if not agents.is_file():
+            return None
+        persona = agents.read_text(encoding="utf-8").strip()
+        if not persona:
+            return None
+        skill = base / "SKILL.md"
+        if skill.is_file():
+            skill_text = skill.read_text(encoding="utf-8").strip()
+            if skill_text:
+                persona += (
+                    "\n\n=== Skill pack (tools + when to use them) ===\n"
+                    + skill_text[:SME_SKILL_MAX_CHARS]
+                )
+        return persona
+    except Exception as e:  # noqa: BLE001 — a bad/missing pack must not fail-stop
+        log.warning("loading SME pack for %s failed (%s); using one-liner", sme_id, e)
+        return None
+
+
+def _sme_persona(sme_id: str) -> "str | None":
+    """Return the cached assembled persona for `sme_id` (None if no pack). Loads
+    + caches once per SME, thread-safe (the guild fans out concurrently)."""
+    if sme_id in _sme_packs:
+        return _sme_packs[sme_id]
+    with _sme_packs_lock:
+        if sme_id not in _sme_packs:  # re-check after acquiring the lock
+            _sme_packs[sme_id] = _build_persona(sme_id)
+        return _sme_packs[sme_id]
+
+
+def reset_sme_packs_for_tests() -> None:
+    """Test hook: drop the cached personas so a test can re-exercise loading
+    (e.g. after pointing FORGE_SMES_DIR at a fixture). Not used in production."""
+    _sme_packs.clear()
 
 
 def _genai():
@@ -711,45 +794,206 @@ def _run_sme_tool_loop(
     return _loads(getattr(final, "text", None)), tool_calls
 
 
+# ── Opt-in per-SME managed-agent path (Antigravity Interactions API) ─────────
+#
+# DEFAULT OFF. When FORGE_SME_USE_SANDBOX=1, each SME runs as a REAL Antigravity
+# managed agent: interactions.create(agent=ANTIGRAVITY_AGENT, input=briefing,
+# system_instruction=persona, environment=<warm per-SME env>). Each SME keeps its
+# OWN warm sandbox (a per-SME environment_id in _sme_env) reused across turns, so
+# the ~70s cold-start is paid ONCE per SME (prewarm_smes() pays it up front, off
+# the critical path). This is the latency-tolerant upgrade the ROADMAP describes;
+# the default live path stays the fast Flash tool-loop. Key-gated + lazy: no key
+# / google-genai absent → never selected (offline boot, tests pass).
+#
+# NB this is distinct from the SINGLE shared run_analysis compute sandbox above:
+# that is a per-CALL "do real math" tool the Flash tool-loop invokes; THIS is a
+# per-SME agent environment that runs the SME's whole turn.
+
+#: smeId -> the SME's own warm managed-agent environment_id (reused across turns).
+_sme_env: "dict[str, str]" = {}
+#: Serializes per-SME env creation (the guild fans out concurrently; two threads
+#: could race to provision the same SME's env on a cold first summon).
+_sme_env_lock = threading.Lock()
+
+
+def _sme_sandbox_enabled() -> bool:
+    """True only when the opt-in per-SME managed-agent path is selected: the
+    FORGE_SME_USE_SANDBOX flag is on AND a sandbox can exist (key + google-genai).
+    Default OFF — the fast Flash tool-loop stays the live default."""
+    if os.getenv("FORGE_SME_USE_SANDBOX", "0") != "1":
+        return False
+    return _sandbox_enabled()
+
+
+def _get_sme_env(sme_id: str) -> "str | None":
+    """Provision-once + cache this SME's own warm sandbox environment_id (reused
+    across turns). Returns None if creation failed (caller falls back / degrades).
+    Thread-safe: the guild fans out concurrently."""
+    env = _sme_env.get(sme_id)
+    if env is not None:
+        return env
+    with _sme_env_lock:
+        if sme_id in _sme_env:  # won the race after acquiring the lock
+            return _sme_env[sme_id]
+        try:
+            it = _genai().interactions.create(
+                agent=ANTIGRAVITY_AGENT,
+                input="ready",  # trivial provisioning turn
+                system_instruction=f"You are {sme_id} on Forge's guild.",
+                environment="remote",
+            )
+            new_env = getattr(it, "environment_id", None)
+            if not new_env:
+                log.warning("per-SME sandbox create for %s returned no env_id", sme_id)
+                return None
+            _sme_env[sme_id] = new_env
+            log.info("per-SME sandbox created for %s env_id=%s", sme_id, new_env)
+            return new_env
+        except Exception as e:  # noqa: BLE001 — preview/allowlist/network
+            log.warning("per-SME sandbox create for %s failed (%s)", sme_id, e)
+            return None
+
+
+def _summon_via_sandbox(
+    sme_id: str, summon: SummonGuild, system: str, brief: str,
+    on_tool_call: "Callable[[dict], None] | None" = None,
+) -> dict:
+    """Run ONE SME turn as a real Antigravity managed agent in the SME's warm
+    sandbox and return the parsed final SmeResponse dict. The persona is the
+    agent's `system_instruction` and the grounded briefing (+ the forced-JSON
+    output contract + siblings) is the `input`; the per-SME environment is reused
+    across turns. Raises on failure → real_summon_one's envelope falls back to the
+    stub (never-fail-stop). When on_tool_call is given, the completed turn is
+    surfaced through it (mirrors the tool-loop's streaming sink contract)."""
+    env = _get_sme_env(sme_id)
+    if env is None:
+        raise RuntimeError(f"per-SME sandbox unavailable for {sme_id}")
+    siblings = [s for s in summon.smes if s != sme_id]
+    user_input = (
+        f"=== Guild brief ===\n{brief}\n\n"
+        f"Other SMEs consulted in parallel: {siblings or 'none'}\n\n"
+        "Conclude with ONE raw JSON object — no markdown fences, no prose before "
+        "or after, strict JSON. Shape: "
+        '{"confidence": <0-1>, "claim": "<one-sentence answer>", '
+        '"rationale": "<2-3 sentences; CITE the datasheet page / board-doc section '
+        '/ documented limit>", '
+        '"proposedAction": null OR {"tool": "set_psu|probe_net|serial_send|flash_mcu|inspect_closeup", '
+        '"args": {"target":"<net>","voltage_v":<n>,...}, '
+        '"instruction": "<imperative step for the operator>", "risk": "LOW|MEDIUM|HIGH"}}. '
+        "Use proposedAction only when a concrete operator step is warranted; else null. "
+        "Do NOT invent any voltage/current setpoint."
+    )
+    it = _genai().interactions.create(
+        agent=ANTIGRAVITY_AGENT,
+        input=user_input,
+        system_instruction=system,
+        environment=env,  # reuse the SME's warm sandbox; NOT environment_id=
+    )
+    text = getattr(it, "output_text", None) or _interaction_text(it) or ""
+    if on_tool_call is not None:
+        try:
+            on_tool_call({"name": "managed_agent", "args": {"sme": sme_id}, "result": None})
+        except Exception as e:  # noqa: BLE001 — a bad sink must not fail-stop
+            log.warning("on_tool_call (managed_agent) sink raised (%s); continuing", e)
+    return _loads(text)
+
+
+def prewarm_smes(roster: "list[str] | None" = None) -> "dict[str, str]":
+    """Provision + cache one managed-agent environment per SME so the first live
+    summon on the opt-in sandbox path is WARM (pays the ~70s cold-start up front,
+    off the critical path). No-op (returns {}) unless the opt-in path is enabled
+    (FORGE_SME_USE_SANDBOX=1 + key + google-genai). Safe to call repeatedly;
+    intended to run once at startup (e.g. a background task). Never raises — a
+    per-SME failure is logged and skipped (01 §7)."""
+    if not _sme_sandbox_enabled():
+        return {}
+    for sme in (roster or SME_ROSTER.split()):
+        if sme in _sme_env:
+            continue
+        try:
+            _get_sme_env(sme)
+        except Exception as e:  # noqa: BLE001 — keep warming the rest
+            log.warning("prewarm_smes(%s) failed (%s)", sme, e)
+    return dict(_sme_env)
+
+
+def reset_sme_env_for_tests() -> None:
+    """Test hook: drop the cached per-SME environments so a test can re-exercise
+    provision-once. Not used in production."""
+    _sme_env.clear()
+
+
+def _sme_system_instruction(sme_id: str) -> str:
+    """Build the SME's system instruction. Prefer the rich on-disk persona pack
+    (smes/<id>/AGENTS.md + SKILL.md); fall back to the inline SME_ROLES one-liner
+    when no pack ships (keeps zero-config boot working — packs are an additive
+    upgrade). The standing-instructions framing is appended either way."""
+    framing = (
+        "You are on Forge's guild advising a HUMAN operator at an electronics "
+        "workbench. Forge actuates nothing — you only recommend steps the "
+        "operator performs by hand. Be terse, ground every claim by retrieving "
+        "it with your tools, and stay strictly in your lane."
+    )
+    pack = _sme_persona(sme_id)
+    if pack is not None:
+        return pack + "\n\n=== Standing instructions ===\n" + framing
+    role = SME_ROLES.get(sme_id, "a specialist SME")
+    return f"You are {sme_id}, {role}. " + framing
+
+
+def _build_sme_response(
+    sme_id: str, summon: SummonGuild, d: dict, knowledge: KnowledgeAdapter | None,
+) -> SmeResponse:
+    """Assemble the SmeResponse envelope from the model's parsed final JSON. We
+    build it ourselves and the orchestrator attaches the documented-limit
+    citation to any proposed step — the model never invents a setpoint (03 §3.3.6)."""
+    conf = min(max(float(d.get("confidence", 0.5)), 0.0), 1.0)
+    claim = str(d.get("claim", "")).strip() or f"{sme_id}: (no claim)"
+    return SmeResponse(
+        smeId=sme_id,
+        callId=summon.callId,
+        confidence=conf,
+        claim=claim,
+        rationale=str(d.get("rationale", "")).strip(),
+        proposedActions=_wrap_action(d.get("proposedAction"), claim, knowledge),
+        ts=now_ns(),
+    )
+
+
 def real_summon_one(
     sme_id: str,
     summon: SummonGuild,
     knowledge: KnowledgeAdapter | None = None,
     on_tool_call: "Callable[[dict], None] | None" = None,
 ) -> SmeResponse:
-    """Summon one SME as a bounded tool-calling agent on gemini-3.5-flash (not
-    the ~70s-cold Antigravity sandbox; see ROADMAP). The persona is the system
-    instruction and the orchestrator-assembled `summon.briefing` (question +
-    board facts + limits + snapshot, see GraphEngine._build_briefing) is the
-    grounded starting context. The SME may PULL more via three read-only tools
-    (lookup_datasheet / lookup_board_doc / get_documented_limit) bound to the
-    per-session KnowledgeAdapter, reasoning over what it retrieves before
-    concluding with a forced-JSON SmeResponse. We build the SmeResponse envelope
-    ourselves and the orchestrator attaches the documented-limit citation to any
-    proposed step — the model never invents a setpoint (03 §3.3.6)."""
+    """Summon one SME and return its SmeResponse.
+
+    DEFAULT path (fast, live): a bounded tool-calling agent on gemini-3.5-flash
+    (not the ~70s-cold Antigravity sandbox; see ROADMAP). The persona is the
+    system instruction and the orchestrator-assembled `summon.briefing` (question
+    + board facts + limits + snapshot, see GraphEngine._build_briefing) is the
+    grounded starting context. The SME PULLS more via the read-only knowledge
+    tools (+ the run_analysis compute sandbox) bound to the per-session adapter,
+    reasoning before concluding with forced JSON.
+
+    OPT-IN path (`FORGE_SME_USE_SANDBOX=1`, default OFF): run the SME as a REAL
+    Antigravity managed agent (interactions.create) in a warm per-SME sandbox —
+    the latency-tolerant upgrade. The DEFAULT stays the Flash tool-loop.
+
+    Either way we build the SmeResponse envelope ourselves and the orchestrator
+    attaches the documented-limit citation to any proposed step — the model never
+    invents a setpoint (03 §3.3.6)."""
     try:
-        role = SME_ROLES.get(sme_id, "a specialist SME")
-        siblings = [s for s in summon.smes if s != sme_id]
-        system = (
-            f"You are {sme_id}, {role}. You are on Forge's guild advising a HUMAN "
-            "operator at an electronics bench. Forge actuates nothing — you only "
-            "recommend steps the operator performs by hand. Be terse, ground every "
-            "claim in the board doc/datasheet (use your tools to retrieve them), and "
-            "stay strictly in your lane."
-        )
+        system = _sme_system_instruction(sme_id)
         brief = summon.briefing or f"Topic: {summon.topic}"
-        d, _tool_calls = _run_sme_tool_loop(system, brief, siblings, knowledge, on_tool_call)
-        conf = min(max(float(d.get("confidence", 0.5)), 0.0), 1.0)
-        claim = str(d.get("claim", "")).strip() or f"{sme_id}: (no claim)"
-        return SmeResponse(
-            smeId=sme_id,
-            callId=summon.callId,
-            confidence=conf,
-            claim=claim,
-            rationale=str(d.get("rationale", "")).strip(),
-            proposedActions=_wrap_action(d.get("proposedAction"), claim, knowledge),
-            ts=now_ns(),
-        )
+
+        if _sme_sandbox_enabled():
+            d = _summon_via_sandbox(sme_id, summon, system, brief, on_tool_call)
+        else:
+            siblings = [s for s in summon.smes if s != sme_id]
+            d, _tool_calls = _run_sme_tool_loop(
+                system, brief, siblings, knowledge, on_tool_call)
+        return _build_sme_response(sme_id, summon, d, knowledge)
     except Exception as e:  # noqa: BLE001
         log.warning("real_summon_one(%s) failed (%s); using stub", sme_id, e)
         return _stub.stub_summon_one(sme_id, summon)

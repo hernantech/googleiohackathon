@@ -14,3 +14,6 @@ client/
 .env
 *.env
 *.md
+# SME persona/skill packs must ship in the image (loaded by path at runtime,
+# like bench_knowledge/) — re-include them after the blanket *.md ignore.
+!smes/**/*.md
