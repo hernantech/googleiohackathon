@@ -35,6 +35,7 @@ from orchestrator.chat_bus.envelopes import (
     ChannelList,
     Ping,
     Pong,
+    Presence,
     ReplayDone,
 )
 
@@ -81,6 +82,11 @@ class Session:
         self.transport = transport
         self.max_queue = max_queue
         self._queue: list[object] = []
+        # Parallel, lockstep list of the originating sessionId for each queued
+        # event (None = untagged). Kept separate from `_queue` so the queue still
+        # holds raw event models — the backpressure tests + ClientMessageStore
+        # rely on `isinstance` over `_queue` (observer/ATTRIBUTION.md §1).
+        self._queue_origins: list[str | None] = []
         self._seen_ids: set[str] = set()        # ULID dedup (ChatMessage.messageId)
         self.dropped_count = 0                   # cumulative dropped ChannelUpdates
         self._drop_since_ts: int | None = None   # ts of first drop in current burst
@@ -99,19 +105,24 @@ class Session:
         return False
 
     # ── backpressure (§5) ──
-    def enqueue(self, event: object) -> bool:
+    def enqueue(self, event: object, *, origin_session_id: str | None = None) -> bool:
         """Queue an event for this session. Returns False if it was dropped.
 
         Overflow policy: prefer dropping queued `ChannelUpdate`s over the
         incoming event. A `ChatMessage` is never dropped while any droppable
         `ChannelUpdate` sits ahead of it. When something is dropped we record
         it so the bus can emit a single `BackpressureNotice`.
+
+        ``origin_session_id`` (optional, defaulted) is the id of the session the
+        event originated from; it's stamped on the outbound JSON frame at flush
+        so a passive subscriber can attribute it (observer/ATTRIBUTION.md §1).
+        Tracked in a parallel list so the queue still holds raw event models.
         """
         if self._is_duplicate(event):
             return False
 
         if len(self._queue) < self.max_queue:
-            self._queue.append(event)
+            self._append(event, origin_session_id)
             return True
 
         # Queue is full. Try to make room by evicting the oldest ChannelUpdate.
@@ -120,9 +131,9 @@ class Session:
             None,
         )
         if idx is not None:
-            self._queue.pop(idx)
+            self._pop(idx)
             self._note_drop()
-            self._queue.append(event)
+            self._append(event, origin_session_id)
             return True
 
         # No droppable ChannelUpdate left. If the incoming event is itself a
@@ -142,10 +153,20 @@ class Session:
             None,
         )
         if non_msg_idx is not None:
-            self._queue.pop(non_msg_idx)
+            self._pop(non_msg_idx)
             self._note_drop()
-        self._queue.append(event)
+        self._append(event, origin_session_id)
         return True
+
+    def _append(self, event: object, origin_session_id: str | None) -> None:
+        """Append to the event queue + the lockstep origin list."""
+        self._queue.append(event)
+        self._queue_origins.append(origin_session_id)
+
+    def _pop(self, idx: int) -> None:
+        """Pop from the event queue + the lockstep origin list (same index)."""
+        self._queue.pop(idx)
+        self._queue_origins.pop(idx)
 
     def _note_drop(self) -> None:
         self.dropped_count += 1
@@ -165,12 +186,28 @@ class Session:
 
     # ── draining ──
     def flush(self) -> list[object]:
-        """Drain the queue into the transport, in order. Returns what was sent."""
+        """Drain the queue into the transport, in order. Returns what was sent.
+
+        Each event is sent with its originating sessionId as additive serialization
+        `extra` (observer/ATTRIBUTION.md §1). Transports that don't accept the
+        keyword (the test fake's bare `send(event)`) get the plain call — the
+        origin tagging is purely a wire-serialization concern, so dropping it on
+        those sinks is harmless and keeps the `Transport` protocol unchanged."""
         sent = list(self._queue)
+        origins = list(self._queue_origins)
         self._queue.clear()
-        for event in sent:
-            self.transport.send(event)
+        self._queue_origins.clear()
+        for event, origin in zip(sent, origins):
+            self._send(event, origin)
         return sent
+
+    def _send(self, event: object, origin_session_id: str | None) -> None:
+        extra = {"sessionId": origin_session_id} if origin_session_id is not None else None
+        try:
+            self.transport.send(event, extra=extra)
+        except TypeError:
+            # Backward-compatible sink: plain send(event) (e.g. the test fake).
+            self.transport.send(event)
 
     # ── heartbeat (§5, CB-10) ──
     def on_ping_sent(self) -> None:
@@ -186,37 +223,89 @@ class ChatBus:
     """The server. Holds the replay buffer + pending confirmations and fans
     events out to subscribed sessions."""
 
+    #: Default client label for a Presence event when the caller doesn't name one.
+    DEFAULT_CLIENT = "operator"
+
     def __init__(self):
         self._sessions: dict[str, Session] = {}
         self._buffer: list[ChatMessage] = []                # replay buffer (§6)
         self._pending_confirmations: dict[str, ConfirmationRequest] = {}  # by callId
+        self._clients: dict[str, str] = {}                  # session_id -> client label
 
     # ── session lifecycle ──
-    def subscribe(self, session: Session) -> Session:
-        """Register a session for fan-out. Returns it for chaining."""
+    def subscribe(self, session: Session, *, client: str | None = None) -> Session:
+        """Register a session for fan-out and announce its presence.
+
+        Publishes `Presence(state="online")` tagged with this session's id so the
+        observer can show the operator as connected (observer/ATTRIBUTION.md §2).
+        `client` ("phone" | "quest" | ...) is remembered so the matching
+        `Presence(state="offline")` on unsubscribe carries the same label.
+        Returns the session for chaining (unchanged signature otherwise)."""
         self._sessions[session.session_id] = session
+        label = client or self.DEFAULT_CLIENT
+        self._clients[session.session_id] = label
+        self._emit_presence(session.session_id, label, "online")
         return session
 
-    def unsubscribe(self, session_id: str) -> None:
+    def unsubscribe(self, session_id: str, *, client: str | None = None) -> None:
+        """Deregister a session and announce its departure.
+
+        Publishes `Presence(state="offline")` (tagged with this session's id)
+        BEFORE removing the session so every remaining subscriber — incl. the
+        observer — receives it (observer/ATTRIBUTION.md §2). No-op presence if
+        the session was never subscribed."""
+        if session_id in self._sessions:
+            label = client or self._clients.get(session_id) or self.DEFAULT_CLIENT
+            self._emit_presence(session_id, label, "offline")
         self._sessions.pop(session_id, None)
+        self._clients.pop(session_id, None)
+
+    def _emit_presence(self, session_id: str, client: str, state: str) -> None:
+        """Fan a Presence envelope out to subscribers, attributed to `session_id`.
+
+        Delivered to every OTHER subscriber (the observer is the consumer), never
+        to the subject session itself — so it can't jump ahead of that session's
+        own replay handshake (ChannelList → … → ReplayDone must stay first on
+        connect). Presence is a non-union envelope (clients ignore the unknown
+        kind, WP-3) and is NOT recorded into the replay buffer (only ChatMessages
+        are) so it never re-fires on reconnect."""
+        self.publish(
+            Presence(sessionId=session_id, client=client, state=state),
+            origin_session_id=session_id,
+            exclude_session_id=session_id,
+        )
 
     @property
     def sessions(self) -> list[Session]:
         return list(self._sessions.values())
 
     # ── publish / fan-out (§5) ──
-    def publish(self, event: object, *, flush: bool = True) -> None:
+    def publish(
+        self, event: object, *, origin_session_id: str | None = None,
+        exclude_session_id: str | None = None, flush: bool = True,
+    ) -> None:
         """Fan an event out to every subscribed session.
 
         Records `ChatMessage`s into the replay buffer and tracks pending
         `ConfirmationRequest`s (cleared by a matching `ConfirmationResponse`).
         Per-session backpressure is applied in `Session.enqueue`; if drops
         happen, a `BackpressureNotice` is enqueued right behind the event.
+
+        ``origin_session_id`` (optional, defaulted None) is the id of the session
+        the event originated from. It's carried through to each subscriber's
+        outbound JSON as an additive `sessionId` field so a passive subscriber
+        (the observer) can attribute it per-operator (observer/ATTRIBUTION.md §1).
+
+        ``exclude_session_id`` (optional) skips one subscriber — used for Presence
+        so a connecting session never receives its own presence ahead of its
+        replay handshake.
         """
         self._record(event)
 
         for session in self._sessions.values():
-            session.enqueue(event)
+            if exclude_session_id is not None and session.session_id == exclude_session_id:
+                continue
+            session.enqueue(event, origin_session_id=origin_session_id)
             notice = session.take_backpressure_notice()
             if notice is not None:
                 # Enqueue the notice too (it is high-priority, never dropped).
@@ -224,9 +313,12 @@ class ChatBus:
             if flush:
                 session.flush()
 
-    def publish_many(self, events: Iterable[object], *, flush: bool = True) -> None:
+    def publish_many(
+        self, events: Iterable[object], *, origin_session_id: str | None = None,
+        flush: bool = True,
+    ) -> None:
         for e in events:
-            self.publish(e, flush=False)
+            self.publish(e, origin_session_id=origin_session_id, flush=False)
         if flush:
             for s in self._sessions.values():
                 s.flush()
