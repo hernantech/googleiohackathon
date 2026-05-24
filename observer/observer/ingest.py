@@ -53,10 +53,26 @@ def _truncate(text: str | None, n: int = 280) -> str | None:
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
+def _chatmessage_summary(data: dict[str, Any]) -> str | None:
+    """ChatMessage snippet. A snapshot-analysis card rides inside a ChatMessage
+    with ``bodyContentType=application/json`` and a JSON body holding a
+    ``SnapshotAnalysis`` (kind + analysis text) — surface its analysis prose so
+    the manager sees what the vision pass concluded, not an opaque JSON blob."""
+    body = data.get("body")
+    if data.get("bodyContentType") == "application/json" and body:
+        try:
+            obj = json.loads(body)
+        except (json.JSONDecodeError, TypeError):
+            obj = None
+        if isinstance(obj, dict) and obj.get("kind") == "SnapshotAnalysis":
+            return _truncate(f"snapshot: {obj.get('analysis', '')}")
+    return _truncate(body)
+
+
 def _summary_for(kind: str, data: dict[str, Any]) -> str | None:
     """A short, human-facing snippet per event kind — the timeline one-liner."""
     if kind == "ChatMessage":
-        return _truncate(data.get("body"))
+        return _chatmessage_summary(data)
     if kind == "SmeResponse":
         claim = data.get("claim") or ""
         conf = data.get("confidence")
@@ -80,12 +96,27 @@ def _summary_for(kind: str, data: dict[str, Any]) -> str | None:
         return _truncate(data.get("text"))
     if kind == "ToolCall":
         return _truncate(f"call {data.get('name', '')}")
+    if kind == "ToolResult":
+        deferred = " (deferred)" if data.get("deferred") else ""
+        return _truncate(f"result{deferred} {data.get('resultJson', '')}")
+    if kind == "ChannelUpdate":
+        # Streaming token delta — low signal, but keep a snippet so it's never
+        # an opaque blank row in the firehose view.
+        done = " ✓done" if data.get("done") else ""
+        return _truncate(f"…{data.get('deltaText', '')}{done}")
     if kind == "CheckpointMarker":
         return _truncate(f"checkpoint {data.get('graphNodeName', '')}")
     if kind == "Hello":
         return _truncate(f"{data.get('client', '?')} joined session {data.get('sessionId', '')}")
     if kind == "Goodbye":
         return _truncate(f"left: {data.get('reason', '')}")
+    if kind == "Presence":
+        # ADDITIVE forward-hook (see ATTRIBUTION.md): the orchestrator may emit a
+        # presence event when an operator connects/disconnects on /v2/chat or
+        # /v2/live. We persist it keyed by its sessionId so the dashboard can show
+        # connected-vs-idle. Unknown today → simply never arrives (graceful).
+        state = data.get("state", "?")
+        return _truncate(f"{data.get('client', 'operator')} {state} ({data.get('sessionId', '')})")
     return None
 
 
