@@ -33,8 +33,10 @@ The orchestrator backbone (P0–P7) and FastAPI serving layer are **built, teste
 | Phase 2 | Containerised + CI/CD deployed to Azure VM | ✅ done — live at `20.230.188.247:8080` |
 | Phase 3 | Real Gemini model seams wired (classify/merge/dissent/summon/snapshot/Live) | ✅ done — activates with `GEMINI_API_KEY` |
 | Phase 4 | VM secrets for live run | ✅ done (`GEMINI_API_KEY` secret set) |
-| Phase 5 | Missing integration tests (§3.7–3.9, @live variants) | 🔄 in progress |
-| Phase 6 | Edge client parity (iOS DeviceSource fully wired) | ✅ done (iOS); Quest baseline done |
+| Phase 5 | Integration tests (§3.7–3.9, incremental streaming, @live variants) | ✅ done |
+| Phase 6 | Edge client parity — iOS DeviceSource + Quest Live duplex | ✅ done |
+| Guild | Persona/skill packs, concurrent fan-out, streamed deliberation, kept-warm `run_analysis` sandbox | ✅ done |
+| Observer | Decoupled read-only manager dashboard (own container, taps the chat bus) | ✅ done |
 
 **Stub mode / live mode:** The service boots clean with zero env vars. All model seams return canned responses. Set `GEMINI_API_KEY` and the real Gemini calls activate automatically — no restart protocol change, same wire.
 
@@ -73,11 +75,11 @@ All model names are configurable via env vars and fall back to defaults:
 | Seam | Default model | Env var |
 |---|---|---|
 | classify / merge / dissent | `gemini-3.5-flash` | `GEMINI_SME_MODEL` |
-| SME responses (`summon_one`) | `gemini-3.5-flash` (model-only call) | `GEMINI_SME_MODEL` |
+| SME responses (`summon_one`) | `gemini-3.5-flash` (tool-calling loop) | `GEMINI_SME_MODEL` |
 | Snapshot vision | `gemini-3-pro-preview` | `GEMINI_SNAPSHOT_MODEL` |
 | `/v2/live` bridge | `gemini-3.1-flash-live-preview` | `GEMINI_LIVE_MODEL` |
 
-**SME execution note:** SMEs run as fast model-only `gemini-3.5-flash` calls (forced-JSON → `SmeResponse`), not the Antigravity sandbox. The Antigravity sandbox is ~70 s cold per SME — too slow for live deliberation. The sandbox upgrade path (prewarm/keep-warm, spec 07 §5) is deferred; see [ROADMAP.md](ROADMAP.md).
+**SME execution note:** SMEs run as a fast `gemini-3.5-flash` **tool-calling loop**. Each loads its persona/skill from `smes/<id>/` (AGENTS.md + SKILL.md) and may call read-only knowledge tools plus `run_analysis` — a tool backed by a **single, kept-warm Antigravity compute sandbox** (one shared env, keep-warm pinged ~240 s) for real Python math. The guild fans out **concurrently** and streams its deliberation to the chat bus as it unfolds. An opt-in path (`FORGE_SME_USE_SANDBOX=1`) instead runs each SME as its own prewarmed per-SME Antigravity managed agent — latency-tolerant, default off; see [ROADMAP.md](ROADMAP.md).
 
 ---
 
@@ -123,7 +125,7 @@ Sample healthz response (stub mode):
 PYTHONPATH=. pytest -m "not live"
 ```
 
-Tests that require real Gemini credentials are marked `@live` and excluded from the default run. The deterministic suite (backbone P0–P7 + serving-layer integration) currently reports **148 passed** in the worktree's Python environment; the ROADMAP records 174 passed in the full reference run. The `@live` marker keeps CI from calling Gemini on every PR.
+Tests that require real Gemini credentials are marked `@live` and excluded from the default run. The deterministic suite (backbone P0–P7, serving-layer integration, SME guild fan-out/streaming, knowledge + BOM, sandbox seams) has grown to **~270 tests** across ~30 modules, all offline. The `@live` marker keeps CI from calling Gemini on every PR. The `observer/` package ships its own test suite (`cd observer && pytest`).
 
 ---
 
@@ -184,7 +186,7 @@ See [deploy/README.md](deploy/README.md) for one-time VM bootstrap, manual redep
 | Directory | What it is |
 |---|---|
 | `forge_ios/` | iOS DeviceSource client (Swift / Xcode). Implements the v2 wire protocol: always-on `/v2/live` socket, on-tap `/v2/snapshot`, chat UI over `/v2/chat`. Phase 6 parity complete. |
-| `quest/` | Meta Quest MR client (Android/Kotlin + Compose). Chat console, HUD, and confirmation panels in ImmersiveActivity; snapshot via passthrough camera. Forge panels mounted in the MR scene. |
+| `quest/` | Meta Quest MR client (Android/Kotlin + Compose). Full Gemini Live duplex over `/v2/live` (mic PCM + passthrough JPEG up, jitter-buffered TTS down), live connection states, unified guild feed, HUD + confirmation panels in the MR scene. |
 | `clients/` | Laptop device simulator (`live_device_sim.py`). Webcam JPEG + mic PCM → `/v2/live` → TTS playback. Quick integration smoke test without physical hardware. |
 
 ---
@@ -202,13 +204,15 @@ orchestrator/
   chat_bus/          ChatBus, Session, WebSocketTransport (spec 04)
   live/              LiveDuplexBridge + Gemini Live session adapter (spec 00 §4.1)
   snapshot/          analyze_snapshot, handle_snapshot, InMemoryFrameStore
-  knowledge/         KnowledgeAdapter — board profile + datasheet lookups (spec 05)
+  knowledge/         KnowledgeAdapter — board profile, datasheet + BOM lookups (spec 05); bom.py = lookup_bom
   safety/            SafetyGate — table-driven operator-instruction gate (spec 03)
   managed_agents/    read_sme_response() strategy reader (spec 02 §4)
   storage/           InMemoryFrameStore (frame dedup + retrieval)
 
+smes/                10 SME persona/skill packs (AGENTS.md + SKILL.md) loaded by the guild
+observer/            Decoupled read-only manager dashboard — taps the chat bus, persists to SQLite, own container
 specs/               Numbered contracts 00–08 (wire protocol through test plan)
-bench_knowledge/     Bundled BQ79616 demo board profile (examples/)
+bench_knowledge/     Bundled BQ79616 demo board profile + bring-up BOM (examples/)
 testdata/wire/       Golden wire payloads — one JSON file per AgentEvent type
 tests_integration/   End-to-end seam tests (§3.1, §3.4, §3.5, §3.6, §3.7–3.9)
 
@@ -222,3 +226,4 @@ deploy/              CI/CD scripts, docker-compose.yml, VM bootstrap
 - [ROADMAP.md](ROADMAP.md) — phases 1–6, status per phase, env var table, Managed Agents / Antigravity notes
 - [HANDOFF.md](HANDOFF.md) — seam map: spec → module → the exact injection points to wire
 - [ARCHITECTURE.md](ARCHITECTURE.md) — full topology, LangGraph state machine, safety tree, design patterns
+- [observer/README.md](observer/README.md) — the manager dashboard: what it surfaces, the distiller, run/deploy
